@@ -14,6 +14,7 @@ type Config struct {
 	DatabaseURL      string  `mapstructure:"DATABASE_URL"`
 	RedisURL         string  `mapstructure:"REDIS_URL"`
 	WebhookURL       string  `mapstructure:"WEBHOOK_URL"`
+	BotName          string  `mapstructure:"BOT_NAME"`
 }
 
 func LoadConfig() (*Config, error) {
