@@ -3,8 +3,9 @@ package model
 import "time"
 
 type Update struct {
-	UpdateID int      `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int            `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 type Message struct {
@@ -12,6 +13,16 @@ type Message struct {
 	Text      string `json:"text"`
 	Chat      Chat   `json:"chat"`
 	From      User   `json:"from"`
+}
+
+type CallbackQuery struct {
+	ID              string   `json:"id"`
+	From            *User    `json:"from"`
+	Message         *Message `json:"message"`
+	InlineMessageID string   `json:"inline_message_id"`
+	ChatInstance    string   `json:"chat_instance"`
+	Data            string   `json:"data"`
+	GameShortName   string   `json:"game_short_name"`
 }
 
 type Chat struct {
@@ -36,4 +47,9 @@ type Movie struct {
 	TGFileID     string
 	Caption      string
 	CreatedAt    time.Time
+}
+
+type InlineButton struct {
+	Text string `json:"text"`
+	Data string `json:"callback_data"`
 }

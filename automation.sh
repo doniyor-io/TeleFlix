@@ -48,7 +48,7 @@ pkill ngrok 2>/dev/null
 
 echo -e "${GREEN}[INFO] Opening an Ngrok tunnel on port $PORT...${NC}"
 
-ngrok http $PORT > /dev/null 2>&1 &
+ngrok http $PORT --no-http2 --request-header-add "ngrok-skip-browser-warning: true" > /dev/null 2>&1 &
 sleep 3
 
 NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok-free.app')

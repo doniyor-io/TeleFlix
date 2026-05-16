@@ -40,8 +40,10 @@ func (r *PostgresRepository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS users (
 			id BIGINT PRIMARY KEY,
 			username VARCHAR(100),
+			language_code VARCHAR(10) DEFAULT 'uz',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS language_code VARCHAR(10) DEFAULT 'uz';`,
 		`CREATE TABLE IF NOT EXISTS movies (
 			id SERIAL PRIMARY KEY,
 			instagram_url TEXT UNIQUE NOT NULL,
@@ -63,7 +65,7 @@ func (r *PostgresRepository) migrate(ctx context.Context) error {
 		}
 	}
 
-	log.Println("[INFO] Postgres jadvallari tekshirildi va tayyor.")
+	log.Println("[INFO] Postgres tables are checked and ready")
 	return nil
 }
 
@@ -104,4 +106,24 @@ func (r *PostgresRepository) GetActiveChannels(ctx context.Context) ([]map[strin
 		})
 	}
 	return channels, nil
+}
+
+func (r *PostgresRepository) SaveUserLang(ctx context.Context, userID int64, username, lang string) error {
+	query := `INSERT INTO users (id, username, language_code)
+			  VALUES ($1, $2, $3)
+              ON CONFLCT (id) DO UPDATE SET username = $2, language_code = $3
+	`
+
+	_, err := r.Pool.Exec(ctx, query, userID, username, lang)
+	return err
+}
+
+func (r *PostgresRepository) GetUserLang(ctx context.Context, userID int64) (string, error) {
+	query := `SELECT language_code FROM users WHERE id = $1`
+	var lang string
+	err := r.Pool.QueryRow(ctx, query, userID).Scan(&lang)
+	if err != nil {
+		return "uz", nil
+	}
+	return lang, nil
 }

@@ -13,6 +13,8 @@ type Config struct {
 	AdminIDs         []int64 `mapstructure:"ADMIN_IDS"`
 	DatabaseURL      string  `mapstructure:"DATABASE_URL"`
 	RedisURL         string  `mapstructure:"REDIS_URL"`
+	WebhookURL       string  `mapstructure:"WEBHOOK_URL"`
+	BotName          string  `mapstructure:"BOT_NAME"`
 }
 
 func LoadConfig() (*Config, error) {

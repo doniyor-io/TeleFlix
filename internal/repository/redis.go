@@ -43,3 +43,14 @@ func (r *RedisRepository) InvalidateSubscriptionCache(ctx context.Context, userI
 	key := fmt.Sprintf("sub:%d", userID)
 	return r.Client.Del(ctx, key).Err()
 }
+
+func (r *RedisRepository) SetUserLangCache(ctx context.Context, userID int64, lang string) error {
+	key := fmt.Sprintf("lang:%d", userID)
+	return r.Client.Set(ctx, key, lang, 24*time.Hour).Err()
+}
+
+// GetUserLangCache Get User's Language code from Redis Cache
+func (r *RedisRepository) GetUserLangCache(ctx context.Context, userID int64) (string, error) {
+	key := fmt.Sprintf("lang:%d", userID)
+	return r.Client.Get(ctx, key).Result()
+}

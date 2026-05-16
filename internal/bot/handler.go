@@ -26,7 +26,7 @@ func (h *BotHandler) WebhookHTTPHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if u.Message != nil {
+	if u.Message != nil || u.CallbackQuery != nil {
 		h.botService.PushUpdate(u)
 	}
 

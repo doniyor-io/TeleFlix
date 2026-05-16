@@ -43,6 +43,10 @@ func main() {
 
 	botHandler := bot.NewBotHandler(botService)
 
+	err = bot.LoadLocales("locales")
+	if err != nil {
+		log.Fatalf("[CRITICAL] Failed to load locales: %v", err)
+	}
 	http.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
