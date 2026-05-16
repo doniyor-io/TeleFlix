@@ -1,0 +1,9 @@
+{
+  "welcome": "Xush kelibsiz! Botdan foydalanish uchun tilni tanlang:",
+  "choose_lang": "Iltimos, tilni tanlang:",
+  "force_sub": "Botdan foydalanish uchun homiy kanallarga a'zo bo'ling va 'Tekshirish' tugmasini bosing:",
+  "check_sub_btn": "✅ Tekshirish",
+  "sub_error": "Siz hali hamma kanallarga a'zo bo'lmadingiz. Iltimos, qayta urinib ko'ring!",
+  "send_link": "🎬 Instagram Reels linkini yuboring:",
+  "movie_not_found": "Kechirasiz, bu linkka biriktirilgan kino topilmadi. 😔"
+}

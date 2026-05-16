@@ -1,0 +1,9 @@
+{
+  "welcome": "Welcome! Choose a language to use the bot:",
+  "choose_lang": "Please choose a language:",
+  "force_sub": "To use the bot, subscribe to the sponsor channels and press the 'Check' button:",
+  "check_sub_btn": "✅ Check",
+  "sub_error": "You haven't subscribed to all channels yet. Please try again!",
+  "send_link": "🎬 Send an Instagram Reels link:",
+  "movie_not_found": "Sorry, no movie found for this link. 😔"
+}
