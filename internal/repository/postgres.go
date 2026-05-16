@@ -111,7 +111,7 @@ func (r *PostgresRepository) GetActiveChannels(ctx context.Context) ([]map[strin
 func (r *PostgresRepository) SaveUserLang(ctx context.Context, userID int64, username, lang string) error {
 	query := `INSERT INTO users (id, username, language_code)
 			  VALUES ($1, $2, $3)
-              ON CONFLCT (id) DO UPDATE SET username = $2, language_code = $3
+              ON CONFLICT (id) DO UPDATE SET username = $2, language_code = $3
 	`
 
 	_, err := r.Pool.Exec(ctx, query, userID, username, lang)
@@ -126,4 +126,57 @@ func (r *PostgresRepository) GetUserLang(ctx context.Context, userID int64) (str
 		return "uz", nil
 	}
 	return lang, nil
+}
+
+func (r *PostgresRepository) GetTotalUsersCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM users`
+	var count int
+	err := r.Pool.QueryRow(ctx, query).Scan(&count)
+	return count, err
+}
+
+func (r *PostgresRepository) GetTotalMoviesCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM movies`
+	var count int
+	err := r.Pool.QueryRow(ctx, query).Scan(&count)
+	return count, err
+}
+
+func (r *PostgresRepository) AddChannel(ctx context.Context, tgChannelID int64, inviteLink string) error {
+	query := `INSERT INTO channels (tg_channel_id, invite_link, is_active) 
+			  VALUES ($1, $2, true) 
+			  ON CONFLICT (tg_channel_id) DO UPDATE SET invite_link = $2, is_active = true`
+	_, err := r.Pool.Exec(ctx, query, tgChannelID, inviteLink)
+	return err
+}
+
+func (r *PostgresRepository) DeleteChannel(ctx context.Context, tgChannelID int64) error {
+	query := `DELETE FROM channels WHERE tg_channel_id = $1`
+	_, err := r.Pool.Exec(ctx, query, tgChannelID)
+	return err
+}
+
+func (r *PostgresRepository) GetAllMovies(ctx context.Context) ([]map[string]interface{}, error) {
+	query := `SELECT id, instagram_url, tg_file_id, caption FROM movies ORDER BY created_at DESC`
+	rows, err := r.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var movies []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var instaURL, fileID, caption string
+		if err := rows.Scan(&id, &instaURL, &fileID, &caption); err != nil {
+			return nil, err
+		}
+		movies = append(movies, map[string]interface{}{
+			"id":               id,
+			"instagram_url":    instaURL,
+			"telegram_file_id": fileID,
+			"caption":          caption,
+		})
+	}
+	return movies, nil
 }

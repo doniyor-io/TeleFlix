@@ -38,7 +38,6 @@ func main() {
 	}(redisRepo.Client)
 
 	tgClient := telegram.NewTelegramClient(cfg.TelegramBotToken)
-
 	botService := bot.NewBotService(cfg, pgRepo, redisRepo, tgClient)
 
 	botHandler := bot.NewBotHandler(botService)
@@ -47,18 +46,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("[CRITICAL] Failed to load locales: %v", err)
 	}
-	http.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)
+
+	// Health check
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintf(w, "Bot Engine is working fine!")
-		if err != nil {
-			return
-		}
+		fmt.Fprintf(w, "Bot Engine is working fine!")
 	})
 
-	log.Printf("[START] Webhook Server started on port: %s ...", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
+	mux.HandleFunc("/api/admin/stats", botHandler.GetStatsHandler)
+	mux.HandleFunc("/api/admin/channels", botHandler.ChannelsHandler)
+	mux.HandleFunc("/api/admin/channels/delete", botHandler.DeleteChannelHandler)
+	mux.HandleFunc("/api/admin/movies", botHandler.GetMoviesHandler)
+
+	finalHandler := botHandler.CorsMiddleware(mux)
+
+	log.Printf("[START] Webhook & Admin API Server started on port: %s ...", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, finalHandler); err != nil {
 		log.Fatalf("Error running server: %v", err)
 	}
 }

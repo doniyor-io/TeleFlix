@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -38,6 +40,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    networks:
+      - bot_network
+
+  frontend:
+    build:
+      context: ../movie-linker-tma
+      args:
+        - VITE_API_URL=${NGROK_URL}
+    container_name: tg_bot_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - bot_app
     networks:
       - bot_network
 
