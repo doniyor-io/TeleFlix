@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"tg-movie-bot/config"
 	"tg-movie-bot/internal/bot"
 	"tg-movie-bot/internal/repository"
@@ -46,10 +48,19 @@ func main() {
 		log.Fatalf("[CRITICAL] Failed to load locales: %v", err)
 	}
 
+	envWebhook := os.Getenv("WEBHOOK_URL")
+	if envWebhook != "" && envWebhook != cfg.WebhookURL {
+		log.Printf("[SYSTEM] Config ichidagi eski link yangilandi: %s -> %s", cfg.WebhookURL, envWebhook)
+		cfg.WebhookURL = envWebhook
+	}
+	// -----------------------------------------------------------------
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)
 
 	mux.HandleFunc("/api/meta/reel", botHandler.MetaReelHandler)
+
+	hCtx := context.Background()
+	log.Println(hCtx)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
