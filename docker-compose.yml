@@ -33,6 +33,10 @@ services:
   bot_app:
     build: .
     container_name: tg_cinema_bot
+    environment:
+      - DATABASE_URL=postgres://postgres:linux@postgres:5432/moviedb
+      - REDIS_URL=tg_bot_redis:6379
+      - PORT=9090
     ports:
       - "9090:9090"
     env_file:
