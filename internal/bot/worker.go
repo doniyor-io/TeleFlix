@@ -179,7 +179,7 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, workerID int, call
 
 		if s.isAdmin(userID) {
 			// Faqat shu admin chatID si uchun Menu Button (TMA Frontend URL) set qilinadi
-			_ = s.tgClient.SetMenuButtonForChat(ctx, chatID, s.cfg.FrontendURL)
+			_ = s.tgClient.SetMenuButtonForChat(ctx, chatID, s.cfg.WebhookURL)
 
 			buttons := [][]string{
 				{T(newLang, "btn_stats"), T(newLang, "btn_movies")},
