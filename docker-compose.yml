@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -31,13 +33,34 @@ services:
   bot_app:
     build: .
     container_name: tg_cinema_bot
+    environment:
+      - DATABASE_URL=postgres://postgres:linux@postgres:5432/moviedb
+      - REDIS_URL=tg_bot_redis:6379
+      - PORT=9090
     ports:
       - "9090:9090"
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+    networks:
+      - bot_network
+
+  frontend:
+    build:
+      context: ../movie-linker-tma
+      args:
+        - VITE_API_URL=${NGROK_URL}
+    container_name: tg_bot_frontend
+    ports:
+      - "3000:80"
+    env_file:
+      - .env
+    depends_on:
+      - bot_app
     networks:
       - bot_network
 

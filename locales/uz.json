@@ -1,9 +1,20 @@
 {
-  "welcome": "Xush kelibsiz! Botdan foydalanish uchun tilni tanlang:",
-  "choose_lang": "Iltimos, tilni tanlang:",
-  "force_sub": "Botdan foydalanish uchun homiy kanallarga a'zo bo'ling va 'Tekshirish' tugmasini bosing:",
+  "welcome_user": "🎬 Movie Linker\nInstagram reels orqali kinolarni toping!\n\nTilni tanlang:",
+  "welcome_admin": "🎬 Movie Linker — Admin Panel\nWelcome back, Administrator!",
+  "lang_set_user": "✅ Til o'rnatildi. Instagram reel linkini yuboring.",
+  "lang_set_admin": "✅ Admin sifatida muvaffaqiyatli kirdingiz. Boshqaruv paneli faol.",
+  "stats_text": "📊 Bot Statistikasi:\n👥 Jami foydalanuvchilar: {users}\n🎬 Jami kinolar: {movies}\n📢 Aktiv kanallar: {channels}",
+  "force_sub": "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
   "check_sub_btn": "✅ Tekshirish",
-  "sub_error": "Siz hali hamma kanallarga a'zo bo'lmadingiz. Iltimos, qayta urinib ko'ring!",
-  "send_link": "🎬 Instagram Reels linkini yuboring:",
-  "movie_not_found": "Kechirasiz, bu linkka biriktirilgan kino topilmadi. 😔"
+  "sub_success": "✅ Rahmat! Endi reel linkini yuboring.",
+  "not_subbed_yet": "❌ Siz hali barcha kanallarga obuna bo'lmadingiz!",
+  "movie_not_found": "❌ Kino topilmadi.",
+  "send_link": "📎 Instagram reel linkini yuboring.",
+  "movie_added": "✅ Kino muvaffaqiyatli qo'shildi!\n🔑 Kod: {code}\n📝 Caption: {caption}",
+  "add_movie_hint": "📹 Kino qo'shish uchun:\n1. Private kanalga videoni yuboring\n2. Video ustiga bosing → Forward → Menga yuboring\nYoki buyruq shaklida: /add_movie <file_id> <caption>",
+  "btn_stats": "📊 Statistika",
+  "btn_movies": "🎬 Kinolar",
+  "btn_channels": "📢 Kanallar",
+  "btn_add_movie": "➕ Kino qo'shish",
+  "btn_web_panel": "🌐 Web Panel"
 }

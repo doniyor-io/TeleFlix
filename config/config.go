@@ -7,14 +7,16 @@ import (
 )
 
 type Config struct {
-	Port             string  `mapstructure:"PORT"`
-	Env              string  `mapstructure:"ENV"`
-	TelegramBotToken string  `mapstructure:"TELEGRAM_BOT_TOKEN"`
-	AdminIDs         []int64 `mapstructure:"ADMIN_IDS"`
-	DatabaseURL      string  `mapstructure:"DATABASE_URL"`
-	RedisURL         string  `mapstructure:"REDIS_URL"`
-	WebhookURL       string  `mapstructure:"WEBHOOK_URL"`
-	BotName          string  `mapstructure:"BOT_NAME"`
+	Port              string  `mapstructure:"PORT"`
+	Env               string  `mapstructure:"ENV"`
+	TelegramBotToken  string  `mapstructure:"TELEGRAM_BOT_TOKEN"`
+	AdminIDs          []int64 `mapstructure:"ADMIN_IDS"`
+	DatabaseURL       string  `mapstructure:"DATABASE_URL"`
+	RedisURL          string  `mapstructure:"REDIS_URL"`
+	WebhookURL        string  `mapstructure:"WEBHOOK_URL"`
+	FrontendURL       string  `mapstructure:"FRONTEND_URL"`
+	MetaWebhookSecret string  `mapstructure:"META_WEBHOOK_SECRET"`
+	BotName           string  `mapstructure:"BOT_NAME"`
 }
 
 func LoadConfig() (*Config, error) {

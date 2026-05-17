@@ -1,9 +1,20 @@
 {
-  "welcome": "Welcome! Choose a language to use the bot:",
-  "choose_lang": "Please choose a language:",
-  "force_sub": "To use the bot, subscribe to the sponsor channels and press the 'Check' button:",
-  "check_sub_btn": "✅ Check",
-  "sub_error": "You haven't subscribed to all channels yet. Please try again!",
-  "send_link": "🎬 Send an Instagram Reels link:",
-  "movie_not_found": "Sorry, no movie found for this link. 😔"
+  "welcome_user": "🎬 Movie Linker\nFind movies via Instagram reels!\n\nSelect your language:",
+  "welcome_admin": "🎬 Movie Linker — Admin Panel\nWelcome back, Administrator!",
+  "lang_set_user": "✅ Language set successfully. Please send the Instagram reel link.",
+  "lang_set_admin": "✅ Successfully logged in as Admin. Control panel is now active.",
+  "stats_text": "📊 Bot Statistics:\n👥 Total Users: {users}\n🎬 Total Movies: {movies}\n📢 Active Channels: {channels}",
+  "force_sub": "⚠️ To use this bot, please subscribe to the following channels:",
+  "check_sub_btn": "✅ Verify Subscription",
+  "sub_success": "✅ Thank you! Now you can send the reel link.",
+  "not_subbed_yet": "❌ You haven't subscribed to all channels yet!",
+  "movie_not_found": "❌ Movie not found.",
+  "send_link": "📎 Please send an Instagram reel link.",
+  "movie_added": "✅ Movie successfully added!\n🔑 Code: {code}\n📝 Caption: {caption}",
+  "add_movie_hint": "📹 To add a movie:\n1. Send the video to a private channel\n2. Click on the video → Forward → Send to me\nOr use the command format: /add_movie <file_id> <caption>",
+  "btn_stats": "📊 Statistics",
+  "btn_movies": "🎬 Movies",
+  "btn_channels": "📢 Channels",
+  "btn_add_movie": "➕ Add Movie",
+  "btn_web_panel": "🌐 Web Panel"
 }
