@@ -35,6 +35,8 @@ services:
     container_name: tg_cinema_bot
     ports:
       - "9090:9090"
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +53,8 @@ services:
     container_name: tg_bot_frontend
     ports:
       - "3000:80"
+    env_file:
+      - .env
     depends_on:
       - bot_app
     networks:

@@ -22,6 +22,8 @@ if [ -z "$PORT" ]; then
     PORT=9090
 fi
 
+PORT=3000
+
 BOT_TOKEN=$(grep -E "^TELEGRAM_BOT_TOKEN=" $ENV_FILE | cut -d '=' -f2 | tr -d '\r' | tr -d ' ')
 if [ -z "$BOT_TOKEN" ]; then
     echo -e "${RED}[ERROR] TELEGRAM_BOT_TOKEN was not found in .env or is empty!${NC}"
