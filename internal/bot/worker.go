@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"tg-movie-bot/config"
 	"tg-movie-bot/internal/model"
@@ -290,9 +291,39 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 	}
 
 	for _, ch := range channels {
-		chID := ch["id"].(int64)
+		var chID int64
+
+		switch v := ch["id"].(type) {
+		case int64:
+			chID = v
+		case int:
+			chID = int64(v)
+		case int32:
+			chID = int64(v)
+		case float64:
+			chID = int64(v)
+		default:
+			if strID, ok := ch["id"].(string); ok {
+				importStr, err := strconv.ParseInt(strID, 10, 64)
+				if err == nil {
+					chID = importStr
+				} else {
+					log.Printf("[ERROR] Failed to convert string Channel ID to int64: %s", strID)
+					return false
+				}
+			} else {
+				log.Printf("[ERROR] Channel ID type is unknown for Go: %T (%v)", ch["id"], ch["id"])
+				return false
+			}
+		}
+
 		subbed, err := s.tgClient.IsChatMember(ctx, chID, userID)
-		if err != nil || !subbed {
+		if err != nil {
+			log.Printf("[CHECK-SUB ERROR] Channel: %d, User: %d, Cause: %v", chID, userID, err)
+			return false
+		}
+
+		if !subbed {
 			return false
 		}
 	}
