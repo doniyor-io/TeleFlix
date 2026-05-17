@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"tg-movie-bot/internal/model"
 )
 
@@ -32,6 +33,52 @@ func (h *BotHandler) WebhookHTTPHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ReelLink  string `json:"reel_link"`
+		MovieCode string `json:"movie_code"`
+		AuthToken string `json:"auth_token"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad request body", http.StatusBadRequest)
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" {
+		token = req.AuthToken
+	}
+
+	if token != h.botService.cfg.MetaWebhookSecret {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+	movieID, _, _, err := h.botService.pgRepo.GetMovieByCode(ctx, req.MovieCode)
+	if err != nil {
+		http.Error(w, "Movie code not found in system", http.StatusNotFound)
+		return
+	}
+
+	err = h.botService.pgRepo.SaveReel(ctx, req.ReelLink, movieID)
+	if err != nil {
+		http.Error(w, "Database injection failure", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Reel successfully linked to movie"})
 }
 
 func (h *BotHandler) CorsMiddleware(next http.Handler) http.Handler {
@@ -66,7 +113,7 @@ func (h *BotHandler) GetStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
@@ -80,10 +127,7 @@ func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		err = json.NewEncoder(w).Encode(channels)
-		if err != nil {
-			return
-		}
+		_ = json.NewEncoder(w).Encode(channels)
 
 	case http.MethodPost:
 		var req struct {
@@ -107,7 +151,7 @@ func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Channel added successfully"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Channel added successfully"})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -134,7 +178,7 @@ func (h *BotHandler) DeleteChannelHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Channel deleted successfully"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Channel deleted successfully"})
 }
 
 func (h *BotHandler) GetMoviesHandler(w http.ResponseWriter, r *http.Request) {
@@ -151,5 +195,5 @@ func (h *BotHandler) GetMoviesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(movies)
+	_ = json.NewEncoder(w).Encode(movies)
 }

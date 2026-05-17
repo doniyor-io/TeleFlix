@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/url"
 	"runtime"
@@ -84,27 +85,71 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 		_ = s.redisRepo.SetUserLangCache(ctx, userID, userLang)
 	}
 
-	if s.isAdmin(msg.From.ID) {
+	// ADMIN POLING REPLIES
+	if s.isAdmin(userID) {
+		switch msg.Text {
+		case T(userLang, "btn_stats"):
+			uCount, _ := s.pgRepo.GetTotalUsersCount(ctx)
+			mCount, _ := s.pgRepo.GetTotalMoviesCount(ctx)
+			ch, _ := s.pgRepo.GetActiveChannels(ctx)
+			txt := T(userLang, "stats_text")
+			txt = strings.NewReplacer("{users}", fmt.Sprintf("%d", uCount), "{movies}", fmt.Sprintf("%d", mCount), "{channels}", fmt.Sprintf("%d", len(ch))).Replace(txt)
+			s.tgClient.SendMessage(ctx, chatID, txt)
+			return
+
+		case T(userLang, "btn_movies"):
+			list, _ := s.pgRepo.GetLatestMoviesList(ctx, 10)
+			if len(list) == 0 {
+				s.tgClient.SendMessage(ctx, chatID, "🎬 Kinolar mavjud emas.")
+				return
+			}
+			s.tgClient.SendMessage(ctx, chatID, strings.Join(list, "\n"))
+			return
+
+		case T(userLang, "btn_channels"):
+			channels, _ := s.pgRepo.GetActiveChannels(ctx)
+			if len(channels) == 0 {
+				s.tgClient.SendMessage(ctx, chatID, "📢 Kanallar yo'q.")
+				return
+			}
+			var sb strings.Builder
+			sb.WriteString("📢 Faol kanallar:\n")
+			for i, ch := range channels {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ch["link"].(string)))
+			}
+			s.tgClient.SendMessage(ctx, chatID, sb.String())
+			return
+
+		case T(userLang, "btn_add_movie"):
+			s.tgClient.SendMessage(ctx, chatID, T(userLang, "add_movie_hint"))
+			return
+
+		case T(userLang, "btn_web_panel"):
+			s.tgClient.SendInlineKeyboard(ctx, chatID, "🌐 Web Panelni ochish:", [][]model.InlineButton{{
+				{Text: "💻 Open WebApp", URL: s.cfg.FrontendURL},
+			}})
+			return
+		}
+
 		if strings.HasPrefix(msg.Text, "/add_movie") {
-			s.handleAdminAddMovie(ctx, msg)
+			s.handleAdminAddMovieCommand(ctx, msg)
 			return
 		}
 	}
 
 	if msg.Text == "/start" {
 		var welcomeTxt string
-
 		if s.isAdmin(userID) {
-			welcomeTxt = "STATUS: AUTH_SUCCESS\nRole: Administrator\n\nSelect system interface language:"
+			welcomeTxt = T(userLang, "welcome_admin")
 		} else {
-			welcomeTxt = "Welcome to Cinema Bot API.\n\nSelect your language:"
+			welcomeTxt = T(userLang, "welcome_user")
 		}
 
 		s.tgClient.SendInlineKeyboard(ctx, chatID, welcomeTxt, [][]model.InlineButton{
 			{
-				{Text: "🇺🇿 UZ", Data: "adm_uz"},
-				{Text: "🇷🇺 RU", Data: "adm_ru"},
-				{Text: "🇺🇸 EN", Data: "adm_en"},
+				{Text: "🇺🇿 UZ", Data: "lang_uz"},
+				{Text: "🇷🇺 RU", Data: "lang_ru"},
+				{Text: "🇬🇧 EN", Data: "lang_en"},
 			},
 		})
 		return
@@ -119,103 +164,82 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 }
 
 func (s *BotService) handleCallbackQuery(ctx context.Context, workerID int, callback *model.CallbackQuery) {
-	log.Printf("[Worker %d] Callback signal received | Data: %s", workerID, callback.Data)
-
 	chatID := callback.Message.Chat.ID
 	userID := callback.From.ID
 	data := callback.Data
 
-	// Stop loading animation on the button immediately
 	s.tgClient.AnswerCallbackQuery(ctx, callback.ID)
 
-	// Process language selection signals
-	if strings.HasPrefix(data, "adm_") {
-		var responseText, yesBtn, noBtn string
-		newLang := "uz"
-
-		switch data {
-		case "adm_uz":
-			newLang = "uz"
-			if s.isAdmin(userID) {
-				responseText = "Access granted. Root privileges enabled.\nInitialize Telegram Mini App (TMA) session?"
-				yesBtn = "$ exec tma_init --open"
-				noBtn = "$ exit"
-			} else {
-				responseText = "Language set to: UZ\nSystem ready. Send Instagram URL."
-			}
-		case "adm_ru":
-			newLang = "ru"
-			if s.isAdmin(userID) {
-				responseText = "Доступ разрешен. Права администратора активны.\nИнициализировать сессию TMA?"
-				yesBtn = "$ exec tma_init --open"
-				noBtn = "$ exit"
-			} else {
-				responseText = "Язык изменен на: RU\nСистема готова. Отправьте ссылку Instagram."
-			}
-		case "adm_en":
-			newLang = "en"
-			if s.isAdmin(userID) {
-				responseText = "Access granted. Root privileges enabled.\nInitialize Telegram Mini App (TMA) session?"
-				yesBtn = "$ exec tma_init --open"
-				noBtn = "$ exit"
-			} else {
-				responseText = "Language set to: EN\nSystem ready. Send Instagram URL."
-			}
-		}
-
+	if strings.HasPrefix(data, "lang_") {
+		newLang := strings.TrimPrefix(data, "lang_")
 		_ = s.pgRepo.SaveUserLang(ctx, userID, callback.From.Username, newLang)
 		_ = s.redisRepo.SetUserLangCache(ctx, userID, newLang)
 
 		s.tgClient.DeleteMessage(ctx, chatID, callback.Message.MessageID)
 
 		if s.isAdmin(userID) {
-			tmaURL := s.cfg.WebhookURL
-			s.tgClient.SendWebAppButton(ctx, chatID, responseText, yesBtn, tmaURL, noBtn, "close_panel")
+			// Faqat shu admin chatID si uchun Menu Button (TMA Frontend URL) set qilinadi
+			_ = s.tgClient.SetMenuButtonForChat(ctx, chatID, s.cfg.FrontendURL)
+
+			buttons := [][]string{
+				{T(newLang, "btn_stats"), T(newLang, "btn_movies")},
+				{T(newLang, "btn_channels"), T(newLang, "btn_add_movie")},
+				{T(newLang, "btn_web_panel")},
+			}
+			s.tgClient.SendReplyKeyboard(ctx, chatID, T(newLang, "lang_set_admin"), buttons)
 		} else {
-			s.tgClient.SendMessage(ctx, chatID, responseText)
+			s.tgClient.SendMessage(ctx, chatID, T(newLang, "lang_set_user"))
 		}
 		return
 	}
 
-	// Terminate session if admin cancels
-	if data == "close_panel" {
-		s.tgClient.DeleteMessage(ctx, chatID, callback.Message.MessageID)
-		s.tgClient.SendMessage(ctx, chatID, "Session terminated. TMA initialization aborted.")
-		return
-	}
-}
+	if data == "check_sub" {
+		_ = s.redisRepo.InvalidateSubscriptionCache(ctx, userID)
+		isSubbed := s.checkChannelsMembership(ctx, userID)
+		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
 
-func (s *BotService) isAdmin(userID int64) bool {
-	for _, adminID := range s.cfg.AdminIDs {
-		if adminID == userID {
-			return true
+		userLang, _ := s.redisRepo.GetUserLangCache(ctx, userID)
+
+		if isSubbed {
+			s.tgClient.DeleteMessage(ctx, chatID, callback.Message.MessageID)
+			s.tgClient.SendMessage(ctx, chatID, T(userLang, "sub_success"))
+		} else {
+			s.tgClient.SendMessage(ctx, chatID, T(userLang, "not_subbed_yet"))
 		}
+		return
 	}
-	return false
 }
 
-func (s *BotService) handleAdminAddMovie(ctx context.Context, msg *model.Message) {
-	parts := strings.SplitN(msg.Text, " ", 4)
-	if len(parts) < 3 {
-		s.tgClient.SendMessage(ctx, msg.Chat.ID, "❌ Format error!\nUsage: `/add_movie <insta_link> <file_id> <comment>`")
+func (s *BotService) handleAdminAddMovieCommand(ctx context.Context, msg *model.Message) {
+	parts := strings.SplitN(msg.Text, " ", 3)
+	if len(parts) < 2 {
+		s.tgClient.SendMessage(ctx, msg.Chat.ID, "❌ Xato format!\nIshlatish: /add_movie <file_id> [caption]")
 		return
 	}
 
-	instaURL := normalizeInstagramURL(parts[1])
-	fileID := parts[2]
+	fileID := parts[1]
 	caption := ""
-	if len(parts) == 4 {
-		caption = parts[3]
+	if len(parts) == 3 {
+		caption = parts[2]
 	}
 
-	err := s.pgRepo.SaveMovie(ctx, instaURL, fileID, caption)
+	code, err := s.pgRepo.GenerateUniqueMovieCode(ctx)
 	if err != nil {
-		log.Printf("[ERROR] Database operation failed (SaveMovie): %v", err)
-		s.tgClient.SendMessage(ctx, msg.Chat.ID, "❌ Database write failure.")
+		s.tgClient.SendMessage(ctx, msg.Chat.ID, "❌ Kod generatsiya qilishda xatolik.")
 		return
 	}
 
-	s.tgClient.SendMessage(ctx, msg.Chat.ID, "✅ Record updated successfully.")
+	fakeInstaURL := fmt.Sprintf("legacy.com/movie/%s", code)
+	err = s.pgRepo.SaveMovie(ctx, fakeInstaURL, fileID, caption, code)
+	if err != nil {
+		s.tgClient.SendMessage(ctx, msg.Chat.ID, "❌ Bazaga yozishda muammo bo'ldi.")
+		return
+	}
+
+	userLang, _ := s.redisRepo.GetUserLangCache(ctx, msg.From.ID)
+	resTxt := T(userLang, "movie_added")
+	resTxt = strings.NewReplacer("{code}", code, "{caption}", caption).Replace(resTxt)
+	s.tgClient.SendMessage(ctx, msg.Chat.ID, resTxt)
 }
 
 func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Message, lang string) {
@@ -231,24 +255,32 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 
 	if !isSubbed {
 		channels, _ := s.pgRepo.GetActiveChannels(ctx)
-		text := T(lang, "force_sub") + "\n\n"
-		for i, ch := range channels {
-			text += string(rune(i+49)) + ") " + ch["link"].(string) + "\n"
+		var buttons [][]model.InlineButton
+		for _, ch := range channels {
+			buttons = append(buttons, []model.InlineButton{{
+				Text: "📢 Kanalga o'tish",
+				URL:  ch["link"].(string),
+			}})
 		}
-		s.tgClient.SendMessage(ctx, chatID, text)
+		buttons = append(buttons, []model.InlineButton{{
+			Text: T(lang, "check_sub_btn"),
+			Data: "check_sub",
+		}})
+
+		s.tgClient.SendInlineKeyboard(ctx, chatID, T(lang, "force_sub"), buttons)
 		return
 	}
 
-	fileID, caption, err := s.pgRepo.GetMovieByInstagramURL(ctx, instaURL)
+	fileID, caption, err := s.pgRepo.GetMovieByReelLink(ctx, "https://"+instaURL)
 	if err != nil {
-		s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_not_found"))
-		return
+		fileID, caption, err = s.pgRepo.GetMovieByInstagramURL(ctx, instaURL)
+		if err != nil {
+			s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_not_found"))
+			return
+		}
 	}
 
-	err = s.tgClient.SendVideo(ctx, chatID, fileID, caption)
-	if err != nil {
-		log.Printf("[ERROR] Video transmission failure: %v", err)
-	}
+	_ = s.tgClient.SendVideo(ctx, chatID, fileID, caption)
 }
 
 func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) bool {
@@ -265,6 +297,10 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 		}
 	}
 	return true
+}
+
+func (s *BotService) isAdmin(userID int64) bool {
+	return s.cfg.IsAdmin(userID)
 }
 
 func (s *BotService) PushUpdate(u model.Update) {

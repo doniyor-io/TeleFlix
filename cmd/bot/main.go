@@ -39,7 +39,6 @@ func main() {
 
 	tgClient := telegram.NewTelegramClient(cfg.TelegramBotToken)
 	botService := bot.NewBotService(cfg, pgRepo, redisRepo, tgClient)
-
 	botHandler := bot.NewBotHandler(botService)
 
 	err = bot.LoadLocales("locales")
@@ -48,10 +47,10 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)
 
-	// Health check
+	mux.HandleFunc("/api/meta/reel", botHandler.MetaReelHandler)
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "Bot Engine is working fine!")

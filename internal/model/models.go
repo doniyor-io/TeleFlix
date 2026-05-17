@@ -42,14 +42,16 @@ type DBUser struct {
 }
 
 type Movie struct {
-	ID           int    `gorm:"primary_key"`
-	InstagramURL string `gorm:"not null"`
-	TGFileID     string
-	Caption      string
-	CreatedAt    time.Time
+	ID           int       `json:"id"`
+	InstagramURL string    `json:"instagram_url"`
+	TGFileID     string    `json:"tg_file_id"`
+	Code         string    `json:"code"`
+	Caption      string    `json:"caption"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type InlineButton struct {
 	Text string `json:"text"`
-	Data string `json:"callback_data"`
+	Data string `json:"callback_data,omitempty"`
+	URL  string `json:"url,omitempty"`
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"tg-movie-bot/internal/model"
 	"time"
@@ -36,30 +35,25 @@ func NewTelegramClient(token string) *TelegramClient {
 
 func (c *TelegramClient) SendMessage(ctx context.Context, chatID int64, text string) error {
 	url := fmt.Sprintf("%s/sendMessage", c.apiURL)
-
 	payload := map[string]interface{}{
 		"chat_id": chatID,
 		"text":    text,
 	}
-
 	return c.postJSON(ctx, url, payload)
 }
 
 func (c *TelegramClient) SendVideo(ctx context.Context, chatID int64, fileID string, caption string) error {
 	url := fmt.Sprintf("%s/sendVideo", c.apiURL)
-
 	payload := map[string]interface{}{
 		"chat_id": chatID,
 		"video":   fileID,
 		"caption": caption,
 	}
-
 	return c.postJSON(ctx, url, payload)
 }
 
 func (c *TelegramClient) IsChatMember(ctx context.Context, channelID int64, userID int64) (bool, error) {
 	url := fmt.Sprintf("%s/getChatMember", c.apiURL)
-
 	payload := map[string]interface{}{
 		"chat_id": channelID,
 		"user_id": userID,
@@ -89,6 +83,94 @@ func (c *TelegramClient) IsChatMember(ctx context.Context, channelID int64, user
 	return status == "creator" || status == "administrator" || status == "member", nil
 }
 
+func (c *TelegramClient) SendInlineKeyboard(ctx context.Context, chatID int64, text string, buttons [][]model.InlineButton) error {
+	url := fmt.Sprintf("%s/sendMessage", c.apiURL)
+
+	var inlineKeyboard [][]map[string]interface{}
+	for _, row := range buttons {
+		var btnRow []map[string]interface{}
+		for _, btn := range row {
+			b := map[string]interface{}{
+				"text": btn.Text,
+			}
+			if btn.URL != "" {
+				b["url"] = btn.URL
+			} else if btn.Data != "" {
+				b["callback_data"] = btn.Data
+			}
+			btnRow = append(btnRow, b)
+		}
+		inlineKeyboard = append(inlineKeyboard, btnRow)
+	}
+
+	payload := map[string]interface{}{
+		"chat_id": chatID,
+		"text":    text,
+		"reply_markup": map[string]interface{}{
+			"inline_keyboard": inlineKeyboard,
+		},
+	}
+	return c.postJSON(ctx, url, payload)
+}
+
+func (c *TelegramClient) SendReplyKeyboard(ctx context.Context, chatID int64, text string, buttons [][]string) error {
+	url := fmt.Sprintf("%s/sendMessage", c.apiURL)
+
+	var keyboard [][]map[string]interface{}
+	for _, row := range buttons {
+		var btnRow []map[string]interface{}
+		for _, btnText := range row {
+			btnRow = append(btnRow, map[string]interface{}{
+				"text": btnText,
+			})
+		}
+		keyboard = append(keyboard, btnRow)
+	}
+
+	payload := map[string]interface{}{
+		"chat_id": chatID,
+		"text":    text,
+		"reply_markup": map[string]interface{}{
+			"keyboard":        keyboard,
+			"resize_keyboard": true,
+			"is_persistent":   true,
+		},
+	}
+	return c.postJSON(ctx, url, payload)
+}
+
+func (c *TelegramClient) SetMenuButtonForChat(ctx context.Context, chatID int64, webAppURL string) error {
+	url := fmt.Sprintf("%s/setChatMenuButton", c.apiURL)
+	payload := map[string]interface{}{
+		"chat_id": chatID,
+		"menu_button": map[string]interface{}{
+			"type": "web_app",
+			"text": "🎬 Admin Panel",
+			"web_app": map[string]interface{}{
+				"url": webAppURL,
+			},
+		},
+	}
+	return c.postJSON(ctx, url, payload)
+}
+
+func (c *TelegramClient) AnswerCallbackQuery(ctx context.Context, callbackID string) error {
+	url := fmt.Sprintf("%s/answerCallbackQuery", c.apiURL)
+	payload := map[string]interface{}{
+		"callback_query_id": callbackID,
+	}
+	return c.postJSON(ctx, url, payload)
+}
+
+func (c *TelegramClient) DeleteMessage(ctx context.Context, chatID int64, messageID int) error {
+	url := fmt.Sprintf("%s/deleteMessage", c.apiURL)
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"message_id": messageID,
+	}
+	return c.postJSON(ctx, url, payload)
+}
+
 func (c *TelegramClient) postJSON(ctx context.Context, url string, payload interface{}) error {
 	_, err := c.postJSONWithResponse(ctx, url, payload)
 	return err
@@ -110,12 +192,7 @@ func (c *TelegramClient) postJSONWithResponse(ctx context.Context, url string, p
 	if err != nil {
 		return nil, err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			return
-		}
-	}(resp.Body)
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("telegram API bad status: %d", resp.StatusCode)
@@ -128,82 +205,4 @@ func (c *TelegramClient) postJSONWithResponse(ctx context.Context, url string, p
 	}
 
 	return buf.Bytes(), nil
-}
-
-// SendInlineKeyboard - Sends a message with native inline keyboard buttons
-func (c *TelegramClient) SendInlineKeyboard(ctx context.Context, chatID int64, text string, buttons [][]model.InlineButton) error {
-	url := fmt.Sprintf("%s/sendMessage", c.apiURL)
-
-	var inlineKeyboard [][]map[string]interface{}
-	for _, row := range buttons {
-		var btnRow []map[string]interface{}
-		for _, btn := range row {
-			btnRow = append(btnRow, map[string]interface{}{
-				"text":          btn.Text,
-				"callback_data": btn.Data,
-			})
-		}
-		inlineKeyboard = append(inlineKeyboard, btnRow)
-	}
-
-	payload := map[string]interface{}{
-		"chat_id": chatID,
-		"text":    text,
-		"reply_markup": map[string]interface{}{
-			"inline_keyboard": inlineKeyboard,
-		},
-	}
-
-	return c.postJSON(ctx, url, payload)
-}
-
-// SendWebAppButton - Sends a message with a WebApp button to initialize TMA session
-func (c *TelegramClient) SendWebAppButton(ctx context.Context, chatID int64, text string, yesText, webAppURL, noText, noData string) error {
-	url := fmt.Sprintf("%s/sendMessage", c.apiURL)
-
-	payload := map[string]interface{}{
-		"chat_id": chatID,
-		"text":    text,
-		"reply_markup": map[string]interface{}{
-			"inline_keyboard": [][]map[string]interface{}{
-				{
-					{
-						"text": yesText,
-						"web_app": map[string]interface{}{
-							"url": webAppURL,
-						},
-					},
-					{
-						"text":          noText,
-						"callback_data": noData,
-					},
-				},
-			},
-		},
-	}
-
-	return c.postJSON(ctx, url, payload)
-}
-
-// AnswerCallbackQuery - Acknowledges the callback query to remove button loading state
-func (c *TelegramClient) AnswerCallbackQuery(ctx context.Context, callbackID string) error {
-	url := fmt.Sprintf("%s/answerCallbackQuery", c.apiURL)
-
-	payload := map[string]interface{}{
-		"callback_query_id": callbackID,
-	}
-
-	return c.postJSON(ctx, url, payload)
-}
-
-// DeleteMessage - Expunges a specific message from the chat logs
-func (c *TelegramClient) DeleteMessage(ctx context.Context, chatID int64, messageID int) error {
-	url := fmt.Sprintf("%s/deleteMessage", c.apiURL)
-
-	payload := map[string]interface{}{
-		"chat_id":    chatID,
-		"message_id": messageID,
-	}
-
-	return c.postJSON(ctx, url, payload)
 }
