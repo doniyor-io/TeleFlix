@@ -16,5 +16,10 @@
   "btn_movies": "🎬 Фильмы",
   "btn_channels": "📢 Каналы",
   "btn_add_movie": "➕ Добавить фильм",
-  "btn_web_panel": "🌐 Веб-панель"
+  "btn_web_panel": "🌐 Веб-панель",
+  "no_movie": "🎬 Фильм не найден",
+  "no_channel": "📢 Канал не найден",
+  "movie_add_format_error": "❌ Неверный формат!\nИспользование: /add_movie <file_id> [caption]",
+  "movie_code_generation_error": "❌ Произошла ошибка при генерации кода.",
+  "movie_db_write_error": "❌ Возникла проблема при записи в базу данных."
 }

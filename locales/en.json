@@ -16,5 +16,10 @@
   "btn_movies": "🎬 Movies",
   "btn_channels": "📢 Channels",
   "btn_add_movie": "➕ Add Movie",
-  "btn_web_panel": "🌐 Web Panel"
+  "btn_web_panel": "🌐 Web Panel",
+  "no_movie": "\uD83C\uDFAC No movie found",
+  "no_channel": "\uD83C\uDFAC No channel found",
+  "movie_add_format_error": "❌ Invalid format!\nUsage: /add_movie <file_id> [caption]",
+  "movie_code_generation_error": "❌ Error occurred during code generation.",
+  "movie_db_write_error": "❌ There was a problem writing to the database."
 }

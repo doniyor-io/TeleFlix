@@ -16,5 +16,7 @@
   "btn_movies": "🎬 Kinolar",
   "btn_channels": "📢 Kanallar",
   "btn_add_movie": "➕ Kino qo'shish",
-  "btn_web_panel": "🌐 Web Panel"
+  "btn_web_panel": "🌐 Web Panel",
+  "no_movie": "\uD83C\uDFAC Kinolar mavjud emas",
+  "no_channel": "\uD83C\uDFAC Kanallar mavjud emas"
 }
