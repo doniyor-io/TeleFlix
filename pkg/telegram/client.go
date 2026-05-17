@@ -145,7 +145,7 @@ func (c *TelegramClient) SetMenuButtonForChat(ctx context.Context, chatID int64,
 		"chat_id": chatID,
 		"menu_button": map[string]interface{}{
 			"type": "web_app",
-			"text": "🎬 Admin Panel",
+			"text": "Open",
 			"web_app": map[string]interface{}{
 				"url": webAppURL,
 			},
