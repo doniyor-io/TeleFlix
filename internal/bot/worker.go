@@ -197,9 +197,15 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, workerID int, call
 	if data == "check_sub" {
 		_ = s.redisRepo.InvalidateSubscriptionCache(ctx, userID)
 		isSubbed := s.checkChannelsMembership(ctx, userID)
-		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
+		if isSubbed {
+			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
+		}
 
-		userLang, _ := s.redisRepo.GetUserLangCache(ctx, userID)
+		userLang, err := s.redisRepo.GetUserLangCache(ctx, userID)
+		if err != nil || userLang == "" {
+			userLang, _ = s.pgRepo.GetUserLang(ctx, userID)
+			_ = s.redisRepo.SetUserLangCache(ctx, userID, userLang)
+		}
 
 		if isSubbed {
 			s.tgClient.DeleteMessage(ctx, chatID, callback.Message.MessageID)
@@ -251,7 +257,9 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 	isSubbed, err := s.redisRepo.GetSubscriptionCache(ctx, userID)
 	if err != nil {
 		isSubbed = s.checkChannelsMembership(ctx, userID)
-		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
+		if isSubbed {
+			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
+		}
 	}
 
 	if !isSubbed {
