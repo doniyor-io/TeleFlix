@@ -222,8 +222,8 @@ func (r *PostgresRepository) GetLatestMoviesList(ctx context.Context, limit int)
 
 func (r *PostgresRepository) AddChannel(ctx context.Context, tgChannelID int64, inviteLink string) error {
 	query := `INSERT INTO channels (tg_channel_id, invite_link, is_active)
-			  VALUES ($1, $2, true)
-			  ON CONFLICT (tg_channel_id) DO UPDATE SET invite_link = $2, is_active = true`
+              VALUES ($1, $2, true)
+              ON CONFLICT (tg_channel_id) DO UPDATE SET invite_link = $2, is_active = true`
 	_, err := r.Pool.Exec(ctx, query, tgChannelID, inviteLink)
 	return err
 }

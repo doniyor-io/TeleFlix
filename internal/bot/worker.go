@@ -382,6 +382,8 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 			continue
 		}
 
+		log.Printf("[DEBUG] Checking channel ID: %d", chID)
+
 		subbed, err := s.tgClient.IsChatMember(ctx, chID, userID)
 		if err != nil {
 			log.Printf("[CHECK-SUB ERROR] Channel: %d, User: %d, Cause: %v", chID, userID, err)
