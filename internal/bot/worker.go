@@ -234,7 +234,18 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 
 	if data == "check_sub" {
 		_ = s.redisRepo.InvalidateSubscriptionCache(ctx, userID)
+
+		log.Printf("[DEBUG] Checking subscription for user %d", userID)
+		channels, err := s.pgRepo.GetActiveChannels(ctx)
+		if err != nil {
+			log.Printf("[ERROR] Failed to get active channels: %v", err)
+		} else {
+			log.Printf("[DEBUG] Active channels: %+v", channels)
+		}
+
 		isSubbed := s.checkChannelsMembership(ctx, userID)
+		log.Printf("[DEBUG] Subscription result for user %d: %v", userID, isSubbed)
+
 		if isSubbed {
 			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
 		}
@@ -365,30 +376,10 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 	}
 
 	for _, ch := range channels {
-		var chID int64
-
-		switch v := ch["id"].(type) {
-		case int64:
-			chID = v
-		case int:
-			chID = int64(v)
-		case int32:
-			chID = int64(v)
-		case float64:
-			chID = int64(v)
-		default:
-			if strID, ok := ch["id"].(string); ok {
-				importStr, err := strconv.ParseInt(strID, 10, 64)
-				if err == nil {
-					chID = importStr
-				} else {
-					log.Printf("[ERROR] Failed to convert string Channel ID to int64: %s", strID)
-					return false
-				}
-			} else {
-				log.Printf("[ERROR] Channel ID type is unknown for Go: %T (%v)", ch["id"], ch["id"])
-				return false
-			}
+		chID, err := parseChannelID(ch["id"])
+		if err != nil {
+			log.Printf("[ERROR] Invalid channel ID format: %v", ch["id"])
+			continue
 		}
 
 		subbed, err := s.tgClient.IsChatMember(ctx, chID, userID)
@@ -402,6 +393,23 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 		}
 	}
 	return true
+}
+
+func parseChannelID(id interface{}) (int64, error) {
+	switch v := id.(type) {
+	case int64:
+		return v, nil
+	case int:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case float64:
+		return int64(v), nil
+	case string:
+		return strconv.ParseInt(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("unsupported channel ID type: %T", id)
+	}
 }
 
 func (s *BotService) isAdmin(userID int64) bool {

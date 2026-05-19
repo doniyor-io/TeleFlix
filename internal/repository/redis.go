@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -36,7 +38,11 @@ func (r *RedisRepository) SetSubscriptionCache(ctx context.Context, userID int64
 
 func (r *RedisRepository) GetSubscriptionCache(ctx context.Context, userID int64) (bool, error) {
 	key := fmt.Sprintf("sub:%d", userID)
-	return r.Client.Get(ctx, key).Bool()
+	val, err := r.Client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	return strconv.ParseBool(val)
 }
 
 func (r *RedisRepository) InvalidateSubscriptionCache(ctx context.Context, userID int64) error {
