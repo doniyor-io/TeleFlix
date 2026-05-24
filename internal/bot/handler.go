@@ -2,6 +2,7 @@ package bot
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ func (h *BotHandler) WebhookHTTPHandler(w http.ResponseWriter, r *http.Request) 
 
 	var u model.Update
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+		log.Printf("[WEBHOOK ERROR] failed to decode update: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -48,6 +50,7 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[META REEL ERROR] failed to decode request: %v", err)
 		http.Error(w, "Bad request body", http.StatusBadRequest)
 		return
 	}
@@ -135,6 +138,7 @@ func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
 			InviteLink string `json:"invite_link"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ADMIN CHANNELS ERROR] invalid add channel payload: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

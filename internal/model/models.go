@@ -13,6 +13,7 @@ type Message struct {
 	Text      string `json:"text"`
 	Chat      Chat   `json:"chat"`
 	From      User   `json:"from"`
+	Video     *Video `json:"video"`
 }
 
 type CallbackQuery struct {
@@ -51,7 +52,15 @@ type Movie struct {
 }
 
 type InlineButton struct {
-	Text string `json:"text"`
-	Data string `json:"callback_data,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Text     string `json:"text"`
+	URL      string `json:"url,omitempty"`
+	Data     string `json:"callback_data,omitempty"`
+	IsWebApp bool   `json:"is_web_app,omitempty"`
+}
+
+type Video struct {
+	FileID   string `json:"file_id"`
+	Duration int    `json:"duration"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5"
@@ -135,9 +137,16 @@ func (r *PostgresRepository) GetMovieByReelLink(ctx context.Context, reelLink st
 }
 
 func (r *PostgresRepository) GetMovieByInstagramURL(ctx context.Context, instagramURL string) (string, string, error) {
-	query := `SELECT tg_file_id, caption FROM movies WHERE instagram_url = $1`
+	parts := strings.Split(strings.TrimSuffix(instagramURL, "/"), "/")
+	if len(parts) == 0 {
+		return "", "", fmt.Errorf("invalid instagram url")
+	}
+	reelID := parts[len(parts)-1]
+
+	query := `SELECT tg_file_id, caption FROM movies WHERE instagram_url LIKE '%' || $1 || '%'`
+
 	var fileID, caption string
-	err := r.Pool.QueryRow(ctx, query, instagramURL).Scan(&fileID, &caption)
+	err := r.Pool.QueryRow(ctx, query, reelID).Scan(&fileID, &caption)
 	return fileID, caption, err
 }
 
@@ -221,10 +230,16 @@ func (r *PostgresRepository) GetLatestMoviesList(ctx context.Context, limit int)
 }
 
 func (r *PostgresRepository) AddChannel(ctx context.Context, tgChannelID int64, inviteLink string) error {
+	normalizedChannelID := normalizeStoredChannelID(tgChannelID)
+	normalizedInviteLink := strings.TrimSpace(inviteLink)
+	if normalizedInviteLink == "" {
+		return errors.New("invite link cannot be empty")
+	}
+
 	query := `INSERT INTO channels (tg_channel_id, invite_link, is_active)
               VALUES ($1, $2, true)
               ON CONFLICT (tg_channel_id) DO UPDATE SET invite_link = $2, is_active = true`
-	_, err := r.Pool.Exec(ctx, query, tgChannelID, inviteLink)
+	_, err := r.Pool.Exec(ctx, query, normalizedChannelID, normalizedInviteLink)
 	return err
 }
 
@@ -257,4 +272,16 @@ func (r *PostgresRepository) GetAllMovies(ctx context.Context) ([]map[string]int
 		})
 	}
 	return movies, nil
+}
+
+func normalizeStoredChannelID(channelID int64) int64 {
+	if channelID <= 0 {
+		return channelID
+	}
+
+	normalized, err := strconv.ParseInt("-100"+strconv.FormatInt(channelID, 10), 10, 64)
+	if err != nil {
+		return channelID
+	}
+	return normalized
 }

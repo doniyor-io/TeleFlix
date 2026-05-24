@@ -77,6 +77,15 @@ func normalizeInstagramURL(rawURL string) string {
 func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model.Message) {
 	log.Printf("[Worker %d] ChatID: %d | Text: %s", workerID, msg.Chat.ID, msg.Text)
 
+	if msg.Video != nil {
+		log.Printf("[🔴 VIDEO UTILITY] Worker %d | ChatID: %d | FILE ID: %s", workerID, msg.Chat.ID, msg.Video.FileID)
+
+		if s.isAdmin(msg.From.ID) {
+			_ = s.tgClient.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf(" File ID'si:\n\n`%s` \n\nTo save to database", msg.Video.FileID))
+		}
+		return
+	}
+
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
 
@@ -86,7 +95,6 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 		_ = s.redisRepo.SetUserLangCache(ctx, userID, userLang)
 	}
 
-	// ADMIN POLING REPLIES
 	if s.isAdmin(userID) {
 		switch msg.Text {
 		case T(userLang, "btn_stats"):
@@ -97,6 +105,7 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			txt = strings.NewReplacer("{users}", fmt.Sprintf("%d", uCount), "{movies}", fmt.Sprintf("%d", mCount), "{channels}", fmt.Sprintf("%d", len(ch))).Replace(txt)
 			err := s.tgClient.SendMessage(ctx, chatID, txt)
 			if err != nil {
+				log.Printf("[TG SEND ERROR] stats message failed for chat %d: %v", chatID, err)
 				return
 			}
 			return
@@ -126,7 +135,7 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 				return
 			}
 			var sb strings.Builder
-			sb.WriteString("📢 Faol kanallar:\n")
+			sb.WriteString("? Faol kanallar:\n")
 			for i, ch := range channels {
 				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ch["link"].(string)))
 			}
@@ -144,8 +153,8 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			return
 
 		case T(userLang, "btn_web_panel"):
-			err := s.tgClient.SendInlineKeyboard(ctx, chatID, "🌐 Web Panelni ochish:", [][]model.InlineButton{{
-				{Text: "💻 Open WebApp", URL: s.cfg.WebhookURL},
+			err := s.tgClient.SendInlineKeyboard(ctx, chatID, "? Web Panelni ochish:", [][]model.InlineButton{{
+				{Text: "? Open WebApp", URL: s.frontendURL()},
 			}})
 			if err != nil {
 				return
@@ -169,12 +178,13 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 
 		err := s.tgClient.SendInlineKeyboard(ctx, chatID, welcomeTxt, [][]model.InlineButton{
 			{
-				{Text: "🇺🇿 UZ", Data: "lang_uz"},
-				{Text: "🇷🇺 RU", Data: "lang_ru"},
-				{Text: "🇬🇧 EN", Data: "lang_en"},
+				{Text: "?? UZ", Data: "lang_uz"},
+				{Text: "?? RU", Data: "lang_ru"},
+				{Text: "?? EN", Data: "lang_en"},
 			},
 		})
 		if err != nil {
+			log.Printf("[TG SEND ERROR] /start keyboard failed for chat %d: %v", chatID, err)
 			return
 		}
 		return
@@ -187,11 +197,17 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 
 	err = s.tgClient.SendMessage(ctx, chatID, T(userLang, "send_link"))
 	if err != nil {
+		log.Printf("[TG SEND ERROR] fallback prompt failed for chat %d: %v", chatID, err)
 		return
 	}
 }
 
 func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.CallbackQuery) {
+	if callback == nil || callback.From == nil || callback.Message == nil {
+		log.Printf("[CALLBACK ERROR] malformed callback payload: %+v", callback)
+		return
+	}
+
 	chatID := callback.Message.Chat.ID
 	userID := callback.From.ID
 	data := callback.Data
@@ -212,7 +228,9 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 		}
 
 		if s.isAdmin(userID) {
-			_ = s.tgClient.SetMenuButtonForChat(ctx, chatID, s.cfg.WebhookURL)
+			if err := s.tgClient.SetMenuButtonForChat(ctx, chatID, s.frontendURL()); err != nil {
+				log.Printf("[TG SEND ERROR] set menu button failed for chat %d: %v", chatID, err)
+			}
 
 			buttons := [][]string{
 				{T(newLang, "btn_stats"), T(newLang, "btn_movies")},
@@ -221,11 +239,13 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 			}
 			err := s.tgClient.SendReplyKeyboard(ctx, chatID, T(newLang, "lang_set_admin"), buttons)
 			if err != nil {
+				log.Printf("[TG SEND ERROR] admin keyboard failed for chat %d: %v", chatID, err)
 				return
 			}
 		} else {
 			err := s.tgClient.SendMessage(ctx, chatID, T(newLang, "lang_set_user"))
 			if err != nil {
+				log.Printf("[TG SEND ERROR] lang confirmation failed for chat %d: %v", chatID, err)
 				return
 			}
 		}
@@ -263,11 +283,13 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 			}
 			err = s.tgClient.SendMessage(ctx, chatID, T(userLang, "sub_success"))
 			if err != nil {
+				log.Printf("[TG SEND ERROR] sub success message failed for chat %d: %v", chatID, err)
 				return
 			}
 		} else {
 			err := s.tgClient.SendMessage(ctx, chatID, T(userLang, "not_subbed_yet"))
 			if err != nil {
+				log.Printf("[TG SEND ERROR] not_subbed_yet message failed for chat %d: %v", chatID, err)
 				return
 			}
 		}
@@ -325,8 +347,11 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 	chatID := msg.Chat.ID
 	instaURL := normalizeInstagramURL(msg.Text)
 
-	isSubbed, err := s.redisRepo.GetSubscriptionCache(ctx, userID)
-	if err != nil {
+	isSubbed, found, err := s.redisRepo.GetSubscriptionCache(ctx, userID)
+	if err != nil || !found {
+		if err != nil {
+			log.Printf("[CACHE ERROR] subscription cache read failed for user %d: %v", userID, err)
+		}
 		isSubbed = s.checkChannelsMembership(ctx, userID)
 		if isSubbed {
 			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
@@ -349,6 +374,7 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 
 		err := s.tgClient.SendInlineKeyboard(ctx, chatID, T(lang, "force_sub"), buttons)
 		if err != nil {
+			log.Printf("[TG SEND ERROR] force_sub keyboard failed for chat %d: %v", chatID, err)
 			return
 		}
 		return
@@ -366,33 +392,50 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 		}
 	}
 
-	_ = s.tgClient.SendVideo(ctx, chatID, fileID, caption)
+	err = s.tgClient.SendVideo(ctx, chatID, fileID, caption)
+	if err != nil {
+		log.Printf("[TG SEND VIDEO ERROR] failed to send video to chat %d: %v", chatID, err)
+
+		_ = s.tgClient.SendMessage(ctx, chatID, "Error while sending video: File ID or the Link is incorrect")
+		return
+	}
 }
 
 func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) bool {
 	channels, err := s.pgRepo.GetActiveChannels(ctx)
 	if err != nil || len(channels) == 0 {
+		if err != nil {
+			log.Printf("[CHECK-SUB ERROR] failed to load channels for user %d: %v", userID, err)
+		}
 		return true
 	}
 
 	for _, ch := range channels {
-		chID, err := parseChannelID(ch["id"])
+		rawID := ch["id"]
+		chID, err := parseChannelID(rawID)
 		if err != nil {
-			log.Printf("[ERROR] Invalid channel ID format: %v", ch["id"])
+			log.Printf("[CHECK-SUB ERROR] invalid channel ID format: %v", rawID)
 			continue
 		}
 
-		log.Printf("[DEBUG] Checking channel ID: %d", chID)
+		for _, candidateID := range membershipCheckChannelIDs(chID) {
+			log.Printf("[DEBUG] Checking channel ID: %d for user %d", candidateID, userID)
 
-		subbed, err := s.tgClient.IsChatMember(ctx, chID, userID)
-		if err != nil {
-			log.Printf("[CHECK-SUB ERROR] Channel: %d, User: %d, Cause: %v", chID, userID, err)
-			return false
-		}
+			subbed, checkErr := s.tgClient.IsChatMember(ctx, candidateID, userID)
+			if checkErr != nil {
+				log.Printf("[CHECK-SUB ERROR] Channel: %d, User: %d, Cause: %v", candidateID, userID, checkErr)
+				continue
+			}
 
-		if !subbed {
-			return false
+			if !subbed {
+				return false
+			}
+
+			goto nextChannel
 		}
+		return false
+
+	nextChannel:
 	}
 	return true
 }
@@ -414,8 +457,28 @@ func parseChannelID(id interface{}) (int64, error) {
 	}
 }
 
+func membershipCheckChannelIDs(channelID int64) []int64 {
+	if channelID <= 0 {
+		return []int64{channelID}
+	}
+
+	fallbackID, err := strconv.ParseInt("-100"+strconv.FormatInt(channelID, 10), 10, 64)
+	if err != nil {
+		return []int64{channelID}
+	}
+
+	return []int64{channelID, fallbackID}
+}
+
 func (s *BotService) isAdmin(userID int64) bool {
 	return s.cfg.IsAdmin(userID)
+}
+
+func (s *BotService) frontendURL() string {
+	if strings.TrimSpace(s.cfg.FrontendURL) != "" {
+		return s.cfg.FrontendURL
+	}
+	return s.cfg.WebhookURL
 }
 
 func (s *BotService) PushUpdate(u model.Update) {

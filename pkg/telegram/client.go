@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"tg-movie-bot/internal/model"
 	"time"
@@ -14,6 +15,13 @@ type TelegramClient struct {
 	token      string
 	apiURL     string
 	httpClient *http.Client
+}
+
+type botAPIResponse struct {
+	Ok          bool            `json:"ok"`
+	Description string          `json:"description"`
+	ErrorCode   int             `json:"error_code"`
+	Result      json.RawMessage `json:"result"`
 }
 
 func NewTelegramClient(token string) *TelegramClient {
@@ -65,22 +73,35 @@ func (c *TelegramClient) IsChatMember(ctx context.Context, channelID int64, user
 	}
 
 	var resp struct {
-		Ok     bool `json:"ok"`
-		Result struct {
-			Status string `json:"status"`
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      struct {
+			Status   string `json:"status"`
+			IsMember *bool  `json:"is_member,omitempty"`
 		} `json:"result"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return false, err
+		return false, fmt.Errorf("json unmarshal error: %w", err)
 	}
 
 	if !resp.Ok {
-		return false, fmt.Errorf("telegram getChatMember error")
+		return false, fmt.Errorf("telegram getChatMember error: %s", resp.Description)
 	}
 
 	status := resp.Result.Status
-	return status == "creator" || status == "administrator" || status == "member", nil
+
+	if status == "creator" || status == "administrator" || status == "member" {
+		return true, nil
+	}
+
+	if status == "restricted" {
+		if resp.Result.IsMember != nil && *resp.Result.IsMember {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (c *TelegramClient) SendInlineKeyboard(ctx context.Context, chatID int64, text string, buttons [][]model.InlineButton) error {
@@ -93,11 +114,19 @@ func (c *TelegramClient) SendInlineKeyboard(ctx context.Context, chatID int64, t
 			b := map[string]interface{}{
 				"text": btn.Text,
 			}
+
 			if btn.URL != "" {
-				b["url"] = btn.URL
+				if btn.IsWebApp {
+					b["web_app"] = map[string]interface{}{
+						"url": btn.URL,
+					}
+				} else {
+					b["url"] = btn.URL
+				}
 			} else if btn.Data != "" {
 				b["callback_data"] = btn.Data
 			}
+
 			btnRow = append(btnRow, b)
 		}
 		inlineKeyboard = append(inlineKeyboard, btnRow)
@@ -190,19 +219,31 @@ func (c *TelegramClient) postJSONWithResponse(ctx context.Context, url string, p
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[TG API ERROR] request failed: %s: %v", url, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("telegram API bad status: %d", resp.StatusCode)
-	}
-
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(resp.Body)
 	if err != nil {
+		log.Printf("[TG API ERROR] body read failed: %s: %v", url, err)
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	body := buf.Bytes()
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("telegram API bad status: %d body=%s", resp.StatusCode, string(body))
+		log.Printf("[TG API ERROR] %v", err)
+		return nil, err
+	}
+
+	var apiResp botAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err == nil && !apiResp.Ok {
+		err = fmt.Errorf("telegram API error %d: %s", apiResp.ErrorCode, apiResp.Description)
+		log.Printf("[TG API ERROR] endpoint=%s error=%v payload=%s", url, err, string(data))
+		return nil, err
+	}
+
+	return body, nil
 }

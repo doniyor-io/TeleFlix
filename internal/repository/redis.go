@@ -36,13 +36,20 @@ func (r *RedisRepository) SetSubscriptionCache(ctx context.Context, userID int64
 	return r.Client.Set(ctx, key, isSubbed, 5*time.Minute).Err()
 }
 
-func (r *RedisRepository) GetSubscriptionCache(ctx context.Context, userID int64) (bool, error) {
+func (r *RedisRepository) GetSubscriptionCache(ctx context.Context, userID int64) (bool, bool, error) {
 	key := fmt.Sprintf("sub:%d", userID)
 	val, err := r.Client.Get(ctx, key).Result()
 	if errors.Is(err, redis.Nil) {
-		return false, nil
+		return false, false, nil
 	}
-	return strconv.ParseBool(val)
+	if err != nil {
+		return false, false, err
+	}
+	parsed, parseErr := strconv.ParseBool(val)
+	if parseErr != nil {
+		return false, false, parseErr
+	}
+	return parsed, true, nil
 }
 
 func (r *RedisRepository) InvalidateSubscriptionCache(ctx context.Context, userID int64) error {
