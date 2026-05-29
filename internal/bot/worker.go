@@ -78,10 +78,10 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 	log.Printf("[Worker %d] ChatID: %d | Text: %s", workerID, msg.Chat.ID, msg.Text)
 
 	if msg.Video != nil {
-		log.Printf("[🔴 VIDEO UTILITY] Worker %d | ChatID: %d | FILE ID: %s", workerID, msg.Chat.ID, msg.Video.FileID)
+		log.Printf("[VIDEO UTILITY] Worker %d | ChatID: %d | FILE ID: %s", workerID, msg.Chat.ID, msg.Video.FileID)
 
 		if s.isAdmin(msg.From.ID) {
-			_ = s.tgClient.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf(" File ID'si:\n\n`%s` \n\nTo save to database", msg.Video.FileID))
+			_ = s.tgClient.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf("File ID:\n\n%s\n\nSaqlash uchun:\n/add_movie %s caption", msg.Video.FileID, msg.Video.FileID))
 		}
 		return
 	}
@@ -89,20 +89,32 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
 
-	userLang, err := s.redisRepo.GetUserLangCache(ctx, userID)
+	userLang, err := s.redisRepo.GetUserLanguageCache(ctx, userID)
 	if err != nil {
-		userLang, _ = s.pgRepo.GetUserLang(ctx, userID)
-		_ = s.redisRepo.SetUserLangCache(ctx, userID, userLang)
+		userLang, _ = s.pgRepo.GetUserLanguage(ctx, userID)
+		_ = s.redisRepo.SetUserLanguageCache(ctx, userID, userLang)
+	}
+
+	if !s.isAdmin(userID) && msg.Contact != nil {
+		s.handleUserContact(ctx, msg, userLang)
+		return
+	}
+
+	if !s.isAdmin(userID) && !s.userExists(ctx, userID) {
+		if err := s.tgClient.ResetMenuButtonForChat(ctx, chatID); err != nil {
+			log.Printf("[TG SEND ERROR] reset menu button failed for chat %d: %v", chatID, err)
+		}
+		_ = s.sendContactRequest(ctx, chatID, userLang)
+		return
 	}
 
 	if s.isAdmin(userID) {
 		switch msg.Text {
 		case T(userLang, "btn_stats"):
-			uCount, _ := s.pgRepo.GetTotalUsersCount(ctx)
-			mCount, _ := s.pgRepo.GetTotalMoviesCount(ctx)
-			ch, _ := s.pgRepo.GetActiveChannels(ctx)
+			stats, _ := s.pgRepo.GetStatistics(ctx)
+			ch, _ := s.pgRepo.GetChannels(ctx)
 			txt := T(userLang, "stats_text")
-			txt = strings.NewReplacer("{users}", fmt.Sprintf("%d", uCount), "{movies}", fmt.Sprintf("%d", mCount), "{channels}", fmt.Sprintf("%d", len(ch))).Replace(txt)
+			txt = strings.NewReplacer("{users}", fmt.Sprintf("%d", stats["users"]), "{movies}", fmt.Sprintf("%d", stats["movies"]), "{channels}", fmt.Sprintf("%d", len(ch))).Replace(txt)
 			err := s.tgClient.SendMessage(ctx, chatID, txt)
 			if err != nil {
 				log.Printf("[TG SEND ERROR] stats message failed for chat %d: %v", chatID, err)
@@ -111,14 +123,23 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			return
 
 		case T(userLang, "btn_movies"):
-			list, _ := s.pgRepo.GetLatestMoviesList(ctx, 10)
-			if len(list) == 0 {
+			movies, _ := s.pgRepo.GetMovies(ctx)
+			if len(movies) == 0 {
 				err = s.tgClient.SendMessage(ctx, chatID, T(userLang, "no_movie"))
 				if err != nil {
 					return
 				}
 				return
 			}
+
+			var list []string
+			for i, m := range movies {
+				if i >= 10 {
+					break
+				}
+				list = append(list, fmt.Sprintf("%d. %s", i+1, m.MovieCode))
+			}
+
 			err := s.tgClient.SendMessage(ctx, chatID, strings.Join(list, "\n"))
 			if err != nil {
 				return
@@ -126,7 +147,7 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			return
 
 		case T(userLang, "btn_channels"):
-			channels, _ := s.pgRepo.GetActiveChannels(ctx)
+			channels, _ := s.pgRepo.GetChannels(ctx)
 			if len(channels) == 0 {
 				err := s.tgClient.SendMessage(ctx, chatID, T(userLang, "no_channel"))
 				if err != nil {
@@ -135,9 +156,9 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 				return
 			}
 			var sb strings.Builder
-			sb.WriteString("? Faol kanallar:\n")
+			sb.WriteString("Faol kanallar:\n")
 			for i, ch := range channels {
-				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ch["link"].(string)))
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, ch.InviteLink))
 			}
 			err := s.tgClient.SendMessage(ctx, chatID, sb.String())
 			if err != nil {
@@ -153,8 +174,8 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			return
 
 		case T(userLang, "btn_web_panel"):
-			err := s.tgClient.SendInlineKeyboard(ctx, chatID, "? Web Panelni ochish:", [][]model.InlineButton{{
-				{Text: "? Open WebApp", URL: s.frontendURL()},
+			err := s.tgClient.SendInlineKeyboard(ctx, chatID, "Web Panelni ochish:", [][]model.InlineButton{{
+				{Text: "Open WebApp", URL: s.frontendURL()},
 			}})
 			if err != nil {
 				return
@@ -174,19 +195,12 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 			welcomeTxt = T(userLang, "welcome_admin")
 		} else {
 			welcomeTxt = T(userLang, "welcome_user")
+			if err := s.tgClient.ResetMenuButtonForChat(ctx, chatID); err != nil {
+				log.Printf("[TG SEND ERROR] reset menu button failed for chat %d: %v", chatID, err)
+			}
 		}
 
-		err := s.tgClient.SendInlineKeyboard(ctx, chatID, welcomeTxt, [][]model.InlineButton{
-			{
-				{Text: "?? UZ", Data: "lang_uz"},
-				{Text: "?? RU", Data: "lang_ru"},
-				{Text: "?? EN", Data: "lang_en"},
-			},
-		})
-		if err != nil {
-			log.Printf("[TG SEND ERROR] /start keyboard failed for chat %d: %v", chatID, err)
-			return
-		}
+		s.sendLanguageSelection(ctx, chatID, welcomeTxt)
 		return
 	}
 
@@ -219,8 +233,16 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 
 	if strings.HasPrefix(data, "lang_") {
 		newLang := strings.TrimPrefix(data, "lang_")
-		_ = s.pgRepo.SaveUserLang(ctx, userID, callback.From.Username, newLang)
-		_ = s.redisRepo.SetUserLangCache(ctx, userID, newLang)
+		if !s.isAdmin(userID) && !s.userExists(ctx, userID) {
+			if err := s.tgClient.ResetMenuButtonForChat(ctx, chatID); err != nil {
+				log.Printf("[TG SEND ERROR] reset menu button failed for chat %d: %v", chatID, err)
+			}
+			_ = s.sendContactRequest(ctx, chatID, newLang)
+			return
+		}
+
+		_ = s.pgRepo.SaveUserLanguage(ctx, userID, callback.From.Username, newLang)
+		_ = s.redisRepo.SetUserLanguageCache(ctx, userID, newLang)
 
 		err := s.tgClient.DeleteMessage(ctx, chatID, callback.Message.MessageID)
 		if err != nil {
@@ -243,6 +265,10 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 				return
 			}
 		} else {
+			if err := s.tgClient.ResetMenuButtonForChat(ctx, chatID); err != nil {
+				log.Printf("[TG SEND ERROR] reset menu button failed for chat %d: %v", chatID, err)
+			}
+
 			err := s.tgClient.SendMessage(ctx, chatID, T(newLang, "lang_set_user"))
 			if err != nil {
 				log.Printf("[TG SEND ERROR] lang confirmation failed for chat %d: %v", chatID, err)
@@ -253,16 +279,9 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 	}
 
 	if data == "check_sub" {
-		_ = s.redisRepo.InvalidateSubscriptionCache(ctx, userID)
+		_ = s.redisRepo.DeleteSubscriptionCache(ctx, userID)
 
 		log.Printf("[DEBUG] Checking subscription for user %d", userID)
-		channels, err := s.pgRepo.GetActiveChannels(ctx)
-		if err != nil {
-			log.Printf("[ERROR] Failed to get active channels: %v", err)
-		} else {
-			log.Printf("[DEBUG] Active channels: %+v", channels)
-		}
-
 		isSubbed := s.checkChannelsMembership(ctx, userID)
 		log.Printf("[DEBUG] Subscription result for user %d: %v", userID, isSubbed)
 
@@ -270,10 +289,10 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
 		}
 
-		userLang, err := s.redisRepo.GetUserLangCache(ctx, userID)
+		userLang, err := s.redisRepo.GetUserLanguageCache(ctx, userID)
 		if err != nil || userLang == "" {
-			userLang, _ = s.pgRepo.GetUserLang(ctx, userID)
-			_ = s.redisRepo.SetUserLangCache(ctx, userID, userLang)
+			userLang, _ = s.pgRepo.GetUserLanguage(ctx, userID)
+			_ = s.redisRepo.SetUserLanguageCache(ctx, userID, userLang)
 		}
 
 		if isSubbed {
@@ -287,19 +306,83 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 				return
 			}
 		} else {
-			err := s.tgClient.SendMessage(ctx, chatID, T(userLang, "not_subbed_yet"))
-			if err != nil {
-				log.Printf("[TG SEND ERROR] not_subbed_yet message failed for chat %d: %v", chatID, err)
-				return
-			}
+			_ = s.sendSubscriptionPrompt(ctx, chatID, userLang, T(userLang, "not_subbed_yet"))
 		}
 		return
 	}
 }
 
+func (s *BotService) handleUserContact(ctx context.Context, msg *model.Message, lang string) {
+	contact := msg.Contact
+	userID := msg.From.ID
+	chatID := msg.Chat.ID
+
+	if contact.UserID != 0 && contact.UserID != userID {
+		_ = s.tgClient.SendMessage(ctx, chatID, T(lang, "contact_invalid"))
+		_ = s.sendContactRequest(ctx, chatID, lang)
+		return
+	}
+
+	if strings.TrimSpace(contact.PhoneNumber) == "" {
+		_ = s.tgClient.SendMessage(ctx, chatID, T(lang, "contact_invalid"))
+		_ = s.sendContactRequest(ctx, chatID, lang)
+		return
+	}
+
+	firstName := contact.FirstName
+	if firstName == "" {
+		firstName = msg.From.FirstName
+	}
+	lastName := contact.LastName
+	if lastName == "" {
+		lastName = msg.From.LastName
+	}
+
+	if err := s.pgRepo.SaveUserContact(ctx, userID, msg.From.Username, contact.PhoneNumber, firstName, lastName); err != nil {
+		log.Printf("[USER ERROR] failed to save contact for user %d: %v", userID, err)
+		_ = s.tgClient.SendMessage(ctx, chatID, T(lang, "contact_save_error"))
+		return
+	}
+
+	if err := s.tgClient.SendRemoveKeyboardMessage(ctx, chatID, T(lang, "contact_saved")); err != nil {
+		log.Printf("[TG SEND ERROR] remove contact keyboard failed for chat %d: %v", chatID, err)
+	}
+
+	s.sendLanguageSelection(ctx, chatID, T(lang, "welcome_user"))
+}
+
+func (s *BotService) sendContactRequest(ctx context.Context, chatID int64, lang string) error {
+	return s.tgClient.SendContactRequestKeyboard(ctx, chatID, T(lang, "contact_required"), T(lang, "contact_button"))
+}
+
+func (s *BotService) sendLanguageSelection(ctx context.Context, chatID int64, text string) {
+	err := s.tgClient.SendInlineKeyboard(ctx, chatID, text, [][]model.InlineButton{
+		{
+			{Text: "🇺🇿 UZ", Data: "lang_uz"},
+			{Text: "🇷🇺 RU", Data: "lang_ru"},
+			{Text: "🇬🇧 EN", Data: "lang_en"},
+		},
+	})
+	if err != nil {
+		log.Printf("[TG SEND ERROR] language keyboard failed for chat %d: %v", chatID, err)
+	}
+}
+
+func (s *BotService) userExists(ctx context.Context, userID int64) bool {
+	exists, err := s.pgRepo.UserExists(ctx, userID)
+	if err != nil {
+		log.Printf("[USER ERROR] failed to check user existence for %d: %v", userID, err)
+		return false
+	}
+	return exists
+}
+
 func (s *BotService) handleAdminAddMovieCommand(ctx context.Context, msg *model.Message) {
 
-	userLang, err := s.redisRepo.GetUserLangCache(ctx, msg.From.ID)
+	userLang, err := s.redisRepo.GetUserLanguageCache(ctx, msg.From.ID)
+	if err != nil {
+		userLang = "uz"
+	}
 	parts := strings.SplitN(msg.Text, " ", 3)
 	if len(parts) < 2 {
 		err := s.tgClient.SendMessage(ctx, msg.Chat.ID, T(userLang, "movie_add_format_error"))
@@ -315,17 +398,7 @@ func (s *BotService) handleAdminAddMovieCommand(ctx context.Context, msg *model.
 		caption = parts[2]
 	}
 
-	code, err := s.pgRepo.GenerateUniqueMovieCode(ctx)
-	if err != nil {
-		err := s.tgClient.SendMessage(ctx, msg.Chat.ID, T(userLang, "movie_code_generation_error"))
-		if err != nil {
-			return
-		}
-		return
-	}
-
-	fakeInstaURL := fmt.Sprintf("legacy.com/movie/%s", code)
-	err = s.pgRepo.SaveMovie(ctx, fakeInstaURL, fileID, caption, code)
+	movie, err := s.pgRepo.CreateMovie(ctx, fileID, caption)
 	if err != nil {
 		err := s.tgClient.SendMessage(ctx, msg.Chat.ID, T(userLang, "movie_db_write_error"))
 		if err != nil {
@@ -335,7 +408,7 @@ func (s *BotService) handleAdminAddMovieCommand(ctx context.Context, msg *model.
 	}
 
 	resTxt := T(userLang, "movie_added")
-	resTxt = strings.NewReplacer("{code}", code, "{caption}", caption).Replace(resTxt)
+	resTxt = strings.NewReplacer("{code}", movie.MovieCode, "{caption}", caption).Replace(resTxt)
 	err = s.tgClient.SendMessage(ctx, msg.Chat.ID, resTxt)
 	if err != nil {
 		return
@@ -347,81 +420,62 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 	chatID := msg.Chat.ID
 	instaURL := normalizeInstagramURL(msg.Text)
 
-	isSubbed, found, err := s.redisRepo.GetSubscriptionCache(ctx, userID)
-	if err != nil || !found {
-		if err != nil {
-			log.Printf("[CACHE ERROR] subscription cache read failed for user %d: %v", userID, err)
-		}
-		isSubbed = s.checkChannelsMembership(ctx, userID)
-		if isSubbed {
-			_ = s.redisRepo.SetSubscriptionCache(ctx, userID, isSubbed)
-		}
+	isSubbed := s.checkChannelsMembership(ctx, userID)
+	if isSubbed {
+		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, true)
+	} else {
+		_ = s.redisRepo.DeleteSubscriptionCache(ctx, userID)
 	}
 
 	if !isSubbed {
-		channels, _ := s.pgRepo.GetActiveChannels(ctx)
-		var buttons [][]model.InlineButton
-		for _, ch := range channels {
-			buttons = append(buttons, []model.InlineButton{{
-				Text: "📢 Kanalga o'tish",
-				URL:  ch["link"].(string),
-			}})
-		}
-		buttons = append(buttons, []model.InlineButton{{
-			Text: T(lang, "check_sub_btn"),
-			Data: "check_sub",
-		}})
+		_ = s.sendSubscriptionPrompt(ctx, chatID, lang, T(lang, "force_sub"))
+		return
+	}
 
-		err := s.tgClient.SendInlineKeyboard(ctx, chatID, T(lang, "force_sub"), buttons)
+	shortcode := repository.ExtractShortcode("https://" + instaURL)
+	movie, err := s.pgRepo.GetMovieByShortcode(ctx, shortcode)
+
+	if err != nil {
+		err := s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_not_found"))
 		if err != nil {
-			log.Printf("[TG SEND ERROR] force_sub keyboard failed for chat %d: %v", chatID, err)
 			return
 		}
 		return
 	}
 
-	fileID, caption, err := s.pgRepo.GetMovieByReelLink(ctx, "https://"+instaURL)
-	if err != nil {
-		fileID, caption, err = s.pgRepo.GetMovieByInstagramURL(ctx, instaURL)
-		if err != nil {
-			err := s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_not_found"))
-			if err != nil {
-				return
-			}
-			return
-		}
+	if strings.Contains(movie.TelegramFileID, "instagram.com") || strings.HasPrefix(movie.TelegramFileID, "http://") || strings.HasPrefix(movie.TelegramFileID, "https://") {
+		log.Printf("[SECURITY ERROR] movie %s has invalid telegram_file_id value", movie.MovieCode)
+		_ = s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_delivery_error"))
+		return
 	}
 
-	err = s.tgClient.SendVideo(ctx, chatID, fileID, caption)
-	if err != nil {
-		log.Printf("[TG SEND VIDEO ERROR] failed to send video to chat %d: %v", chatID, err)
+	err = s.tgClient.SendVideo(ctx, chatID, movie.TelegramFileID, movie.Caption)
 
-		_ = s.tgClient.SendMessage(ctx, chatID, "Error while sending video: File ID or the Link is incorrect")
+	if err != nil {
+		log.Printf("[TG SEND VIDEO ERROR] failed to send movie %s to chat %d: %v", movie.MovieCode, chatID, err)
+		_ = s.tgClient.SendMessage(ctx, chatID, T(lang, "movie_delivery_error"))
 		return
 	}
 }
 
 func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) bool {
-	channels, err := s.pgRepo.GetActiveChannels(ctx)
-	if err != nil || len(channels) == 0 {
-		if err != nil {
-			log.Printf("[CHECK-SUB ERROR] failed to load channels for user %d: %v", userID, err)
-		}
+	channels, err := s.pgRepo.GetChannels(ctx)
+	if err != nil {
+		log.Printf("[CHECK-SUB ERROR] failed to load channels for user %d: %v", userID, err)
+		return false
+	}
+
+	if len(channels) == 0 {
 		return true
 	}
 
 	for _, ch := range channels {
-		rawID := ch["id"]
-		chID, err := parseChannelID(rawID)
-		if err != nil {
-			log.Printf("[CHECK-SUB ERROR] invalid channel ID format: %v", rawID)
-			continue
-		}
+		chID := ch.TelegramChannelID
 
 		for _, candidateID := range membershipCheckChannelIDs(chID) {
 			log.Printf("[DEBUG] Checking channel ID: %d for user %d", candidateID, userID)
 
-			subbed, checkErr := s.tgClient.IsChatMember(ctx, candidateID, userID)
+			subbed, checkErr := s.tgClient.GetChatMember(ctx, candidateID, userID)
 			if checkErr != nil {
 				log.Printf("[CHECK-SUB ERROR] Channel: %d, User: %d, Cause: %v", candidateID, userID, checkErr)
 				continue
@@ -438,6 +492,38 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 	nextChannel:
 	}
 	return true
+}
+
+func (s *BotService) sendSubscriptionPrompt(ctx context.Context, chatID int64, lang string, text string) error {
+	channels, err := s.pgRepo.GetChannels(ctx)
+	if err != nil {
+		log.Printf("[CHECK-SUB ERROR] failed to load channels for prompt: %v", err)
+		return s.tgClient.SendMessage(ctx, chatID, T(lang, "subscription_check_error"))
+	}
+
+	var buttons [][]model.InlineButton
+	for _, ch := range channels {
+		buttons = append(buttons, []model.InlineButton{{
+			Text: "📢 Kanalga o'tish",
+			URL:  ch.InviteLink,
+		}})
+	}
+
+	buttons = append(buttons, []model.InlineButton{{
+		Text: T(lang, "check_sub_btn"),
+		Data: "check_sub",
+	}})
+
+	if len(channels) == 0 {
+		return s.tgClient.SendMessage(ctx, chatID, T(lang, "send_link"))
+	}
+
+	if err := s.tgClient.SendInlineKeyboard(ctx, chatID, text, buttons); err != nil {
+		log.Printf("[TG SEND ERROR] force_sub keyboard failed for chat %d: %v", chatID, err)
+		return err
+	}
+
+	return nil
 }
 
 func parseChannelID(id interface{}) (int64, error) {
@@ -458,7 +544,7 @@ func parseChannelID(id interface{}) (int64, error) {
 }
 
 func membershipCheckChannelIDs(channelID int64) []int64 {
-	if channelID <= 0 {
+	if channelID <= 0 || strings.HasPrefix(strconv.FormatInt(channelID, 10), "-100") {
 		return []int64{channelID}
 	}
 

@@ -57,17 +57,11 @@ sleep 1
 echo -e "${GREEN}[INFO] Opening an Ngrok tunnel on backend port $BACKEND_PORT...${NC}"
 ngrok http $BACKEND_PORT --request-header-add "ngrok-skip-browser-warning: true" > /dev/null 2>&1 &
 
-echo -e "${GREEN}[INFO] Opening an Ngrok tunnel on frontend port $FRONTEND_PORT...${NC}"
-ngrok http $FRONTEND_PORT --request-header-add "ngrok-skip-browser-warning: true" > /dev/null 2>&1 &
-
 echo -e "${BLUE}[INFO] Waiting for Ngrok to generate the tunnel URL...${NC}"
 
-# SENING ORIGINAL 10 MARTALIK TRY LOOPING:
 MAX_ATTEMPTS=10
 ATTEMPT=1
 BACKEND_NGROK_URL=""
-FRONTEND_NGROK_URL=""
-EXISTING_FRONTEND_URL=$(grep -E "^FRONTEND_URL=" "$ENV_FILE" | cut -d '=' -f2- | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 get_ngrok_url_for_port() {
     local port="$1"
@@ -93,7 +87,6 @@ PY
 
 while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
     BACKEND_NGROK_URL=$(get_ngrok_url_for_port "$BACKEND_PORT")
-    FRONTEND_NGROK_URL=$(get_ngrok_url_for_port "$FRONTEND_PORT")
 
     if [ ! -z "$BACKEND_NGROK_URL" ]; then
         break
@@ -112,18 +105,6 @@ fi
 
 echo -e "${GREEN}[SUCCESS] Backend Ngrok link: $BACKEND_NGROK_URL${NC}"
 
-if [ -z "$FRONTEND_NGROK_URL" ]; then
-    if [ ! -z "$EXISTING_FRONTEND_URL" ]; then
-        FRONTEND_NGROK_URL="$EXISTING_FRONTEND_URL"
-        echo -e "${RED}[WARN] Frontend tunnel could not be opened. Using existing FRONTEND_URL from .env: $FRONTEND_NGROK_URL${NC}"
-    else
-        FRONTEND_NGROK_URL="$BACKEND_NGROK_URL"
-        echo -e "${RED}[WARN] Frontend tunnel could not be opened. Falling back FRONTEND_URL to backend URL.${NC}"
-    fi
-else
-    echo -e "${GREEN}[SUCCESS] Frontend Ngrok link: $FRONTEND_NGROK_URL${NC}"
-fi
-
 # Xavfsiz atrof-muhit yozish funksiyasi
 update_env_var() {
     local key="$1"
@@ -141,7 +122,8 @@ update_env_var() {
 
 update_env_var "WEBHOOK_URL" "$BACKEND_NGROK_URL"
 update_env_var "NGROK_URL" "$BACKEND_NGROK_URL"
-update_env_var "FRONTEND_URL" "$FRONTEND_NGROK_URL"
+update_env_var "FRONTEND_URL" "$BACKEND_NGROK_URL"
+update_env_var "FRONTEND_PORT" "$FRONTEND_PORT"
 
 echo -e "${GREEN}[SUCCESS] New Ngrok URLs have successfully been injected in .env!${NC}"
 
@@ -175,4 +157,4 @@ else
     exit 1
 fi
 
-echo -e "${GREEN}[FINISH] All is ready now! Backend: ${BACKEND_NGROK_URL} | Frontend: ${FRONTEND_NGROK_URL}${NC}"
+echo -e "${GREEN}[FINISH] All is ready now! Backend: ${BACKEND_NGROK_URL} | Mini App: ${BACKEND_NGROK_URL}${NC}"

@@ -18,5 +18,15 @@
   "btn_add_movie": "➕ Kino qo'shish",
   "btn_web_panel": "🌐 Web Panel",
   "no_movie": "\uD83C\uDFAC Kinolar mavjud emas",
-  "no_channel": "\uD83C\uDFAC Kanallar mavjud emas"
+  "no_channel": "\uD83C\uDFAC Kanallar mavjud emas",
+  "movie_add_format_error": "❌ Noto'g'ri format!\nFoydalanish: /add_movie <file_id> [caption]",
+  "movie_code_generation_error": "❌ Kod yaratishda xatolik yuz berdi.",
+  "movie_db_write_error": "❌ Bazaga yozishda muammo yuzaga keldi.",
+  "movie_delivery_error": "❌ Kino yuborishda xatolik yuz berdi. Iltimos, admin bilan bog'laning.",
+  "subscription_check_error": "❌ Obunani tekshirishda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.",
+  "contact_required": "Botdan foydalanish uchun telefon raqamingizni ulashing.",
+  "contact_button": "📱 Kontaktni ulashish",
+  "contact_saved": "✅ Kontakt saqlandi.",
+  "contact_invalid": "❌ Iltimos, faqat o'zingizning Telegram kontaktingizni ulashing.",
+  "contact_save_error": "❌ Kontaktni saqlashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
 }

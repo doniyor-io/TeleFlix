@@ -1,156 +1,374 @@
-Telegram Movie Bot — Full Refactor Prompt
+Build a production-ready Telegram Movie Finder Bot in Golang.
 
-PROJECT OVERVIEW
-Go (Golang) da yozilgan Telegram bot. Arxitektura: Go 1.25, PostgreSQL (pgx/v5), Redis, Webhook (HTTP server), Worker Pool (goroutines), Repository pattern, Docker Compose deployment.
+IMPORTANT:
+Do NOT generate toy code.
+Do NOT generate pseudo-code.
+Do NOT leave TODOs.
+Do NOT skip files.
+The project must be complete, scalable, cleanly architected, and production-ready.
 
-PROJECT STRUCTURE
-tg-movie-bot/
-├── cmd/bot/main.go
-├── config/config.go
-├── internal/
-│   ├── bot/
-│   │   ├── handler.go      # HTTP handlers (webhook, admin API)
-│   │   ├── service.go      # Core bot logic, message/callback handlers
-│   │   └── locales.go      # i18n loader + T() func
-│   ├── model/
-│   │   └── models.go       # Telegram update structs
-│   └── repository/
-│       ├── postgres.go     # PostgreSQL queries
-│       └── redis.go        # Redis cache
-├── pkg/telegram/
-│   └── client.go           # Telegram API client
-├── locales/
-│   ├── uz.json
-│   ├── ru.json
-│   └── en.json
-├── docker-compose.yml
-├── Dockerfile
-└── .env
+==================================================
+PROJECT GOAL
+============
 
-CURRENT .env
-PORT=9090
-ENV=development
-TELEGRAM_BOT_TOKEN=...
-ADMIN_IDS=1603879202,7372701399,567023125
-DATABASE_URL=postgres://postgres:linux@tg_bot_postgres:5432/moviedb?sslmode=disable
-REDIS_URL=tg_bot_redis:6379
-WEBHOOK_URL=https://xxxx.ngrok-free.app
-FRONTEND_URL=https://xxxx.ngrok-free.app   <- BU YANGI, QO'SHISH KERAK (TMA frontend URL)
-META_WEBHOOK_SECRET=some_secret_token      <- BU YANGI, QO'SHISH KERAK
-BOT_NAME="Movie Linker"
+The bot must allow users to send Instagram Reel links and receive the movie video directly inside Telegram WITHOUT exposing the private Telegram channel.
 
-BOT MAQSADI
-Bot maqsadi Instagram reels orqali kino tarqatish. Flow quyidagicha: Instagram da kino traileri reeli joylanganda, caption da #KOD bo'ladi (masalan #MOV4829). Meta Graph Webhook script caption dan kodni va reel linkini ajratib, bot API ga yuboradi. Bot shu reel_link + movie_code ni reels jadvaliga saqlaydi. Foydalanuvchi reel linkini botga yuborsa, bot reels jadvalda qidiradi, movie_id topadi va videoni yuboradi. Video Telegram private kanalda file_id sifatida saqlanadi — bot sendVideo(file_id) bilan yuboradi. Kanal linki hech qachon userga ko'rinmaydi, fayl yuklanmaydi.
+Movies are stored in a private Telegram channel.
+The bot stores ONLY Telegram file_id references, NOT actual video files.
 
-NIMA QILISH KERAK — TO'LIQ REFACTOR
+Flow:
 
-1. /start COMMAND — UX REFACTOR
-Hozirgi muammo: /start oddiy xabar yuboradi, g'alati hardcoded tekst bor.
-Kerakli flow: /start kelganda agar admin bo'lsa "🎬 Movie Linker — Admin Panel\nWelcome back, {username}!" xabari chiqadi, agar oddiy user bo'lsa "🎬 Movie Linker\nInstagram reels orqali kinolarni toping!\n\nTilni tanlang:" xabari chiqadi. Har ikki holatda ham til tanlash inline keyboard chiqadi: [ 🇺🇿 UZ ] [ 🇷🇺 RU ] [ 🇬🇧 EN ]. Callback data lar: lang_uz, lang_ru, lang_en (hozirgi adm_uz, adm_ru, adm_en emas).
+1. Admin uploads movie videos into a private Telegram channel.
 
-2. TIL TANLASH CALLBACK — ADMIN VA USER UCHUN ALOHIDA
-Oddiy user til tanlaganda: til bazaga va Redis cache ga saqlanadi, "✅ Til o'rnatildi. Instagram reel linkini yuboring." xabari chiqadi, oldingi xabar DeleteMessage bilan o'chiriladi. Admin til tanlaganda: til saqlanadi, statistika chiqadi (foydalanuvchilar soni, kinolar soni, kanallar soni), pastda doim turadigan ReplyKeyboard chiqadi: [ 📊 Statistika ] [ 🎬 Kinolar ] / [ 📢 Kanallar ] [ ➕ Kino qo'shish ] / [ 🌐 Web Panel ]. Shuningdek admin uchun SetMenuButtonForChat(chatID, cfg.FrontendURL) chaqiriladi — faqat o'sha admin ning chat_id bilan, global emas.
+2. Admin forwards/sends the movie video to the bot.
 
-3. ADMIN REPLYKEYBOARD COMMANDS
-📊 Statistika bosilganda: "📊 Bot Statistikasi:\n👥 Jami foydalanuvchilar: {N}\n🎬 Jami kinolar: {N}\n📢 Aktiv kanallar: {N}" chiqadi.
-🎬 Kinolar bosilganda: oxirgi 10 ta kino ro'yxati chiqadi formatda "1. MOV4829 — Caption text".
-📢 Kanallar bosilganda: aktiv kanallar ro'yxati chiqadi.
-➕ Kino qo'shish bosilganda: "📹 Kino qo'shish uchun:\n1. Private kanalga videoni yuboring\n2. Video ustiga bosing → Forward → Menga yuboring\nYoki: /add_movie <file_id> <caption>" xabari chiqadi. Admin video forward qilganda yoki /add_movie yuborilganda bot kinoni bazaga saqlaydi, unikum kod generatsiya qiladi (MOV + 4 xonali random raqam, unique bo'lishi kerak), javob beradi: "✅ Kino qo'shildi!\n🔑 Kod: MOV4829\n📝 Caption: ...".
-🌐 Web Panel bosilganda: faqat adminga WebApp tugmasi yuboradi, TMA URL: cfg.FrontendURL.
+3. Bot extracts Telegram video file_id.
 
-4. FORCE SUBSCRIBE — INLINE BUTTONS BILAN
-Hozirgi muammo: oddiy tekst bilan kanal linkini yozib yuboradi, bu yaxshi emas.
-Kerakli ko'rinish: "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:" xabari chiqadi. Har bir kanal uchun alohida URL inline button chiqadi: [ 📢 https://t.me/channel1 ] (url type button, tashqi link ochadi). Oxirida [ ✅ Tekshirish ] callback button chiqadi (callback_data: "check_sub"). check_sub callback kelganda: Redis subscription cache invalidate qilinadi, qayta checkChannelsMembership chaqiriladi, obuna bo'lgan bo'lsa "✅ Rahmat! Endi reel linkini yuboring." deydi, obuna bo'lmagan bo'lsa "❌ Siz hali barcha kanallarga obuna bo'lmadingiz!" deydi.
+4. Admin saves the movie into database.
 
-5. INLINEBUTTON MODEL — URL SUPPORT
-models.go da InlineButton structiga URL field qo'shish kerak:
-type InlineButton struct {
-    Text string `json:"text"`
-    Data string `json:"callback_data,omitempty"`
-    URL  string `json:"url,omitempty"`
-}
-client.go da SendInlineKeyboard metodini update qilish kerak: agar btn.URL != "" bo'lsa b["url"] = btn.URL ishlatilsin, agar btn.Data != "" bo'lsa b["callback_data"] = btn.Data ishlatilsin.
+5. Bot generates a unique movie code like:
+   MOV1001
+   MOV2045
+   MOV9999
 
-6. DATABASE — YANGI JADVALLAR VA O'ZGARISHLAR
-movies jadvaliga code field qo'shish: ALTER TABLE movies ADD COLUMN IF NOT EXISTS code VARCHAR(20) UNIQUE; Kod formati: MOV + 4 xonali random raqam, unique bo'lishi shart, generatsiya paytida collision tekshirilsin.
-Yangi reels jadvali:
-CREATE TABLE IF NOT EXISTS reels (
-    id SERIAL PRIMARY KEY,
-    reel_link TEXT UNIQUE NOT NULL,
-    movie_id INT REFERENCES movies(id) ON DELETE SET NULL,
-    linked_at TIMESTAMP DEFAULT NOW()
-);
-postgres.go ga yangi metodlar: GetMovieByCode(ctx, code) — code bo'yicha movie topadi. SaveReel(ctx, reelLink, movieID) — reels jadvaliga saqlaydi. GetMovieByReelLink(ctx, reelLink) — reel link bo'yicha movie topadi. GenerateUniqueMovieCode(ctx) — MOV + 4 raqam, unique bo'lguncha retry qiladi.
+6. Admin posts an Instagram Reel.
 
-7. USER MESSAGE HANDLING — REEL LINK DETECTION
-handleMessage da instagram.com/ bo'lgan xabarlar handleUserMovieRequest ga yuboriladi. handleUserMovieRequest da qidiruv tartibi quyidagicha: avval reels jadvalda reel_link bo'yicha qidiradi, movie_id topsa video yuboradi; topilmasa movies jadvalda instagram_url bo'yicha qidiradi (legacy support); topilmasa "❌ Kino topilmadi." xabari yuboradi.
+7. Reel caption contains the movie code:
+   Example:
+   #MOV2045
 
-8. META WEBHOOK ENDPOINT — YANGI HTTP ENDPOINT
-handler.go da yangi endpoint: POST /api/meta/reel
-Request body:
+8. Meta Instagram Webhook (or custom Instagram listener service) detects new reel posts.
+
+9. Webhook extracts:
+
+   * reel URL
+   * movie code from caption
+
+10. Webhook securely sends:
+
+* movie_code
+* reel_link
+  to the Telegram bot backend API.
+
+11. Backend maps:
+    reel_link -> movie_id
+
+12. User sends Instagram reel link to Telegram bot.
+
+13. Bot:
+
+* finds reel in DB
+* finds linked movie
+* gets Telegram file_id
+* sends video directly using sendVideo
+
+14. User NEVER sees:
+
+* private channel
+* channel link
+* source storage
+
+==================================================
+CRITICAL REQUIREMENTS
+=====================
+
+The bot MUST NEVER:
+
+* store actual video binaries
+* expose private channel links
+* use video URLs instead of Telegram file_id
+* send invalid Telegram video URLs
+
+The bot MUST:
+
+* send videos ONLY via Telegram file_id
+* use PostgreSQL
+* use Redis for cache
+* use worker pool for updates
+* use webhooks (NOT polling)
+* support concurrency
+* support Docker deployment
+* support ngrok/local dev
+* support clean architecture
+
+==================================================
+TECH STACK
+==========
+
+Language:
+
+* Golang 1.25+
+
+Database:
+
+* PostgreSQL
+
+Cache:
+
+* Redis
+
+Deployment:
+
+* Docker
+* Docker Compose
+
+Telegram:
+
+* Telegram Bot API (raw HTTP implementation)
+
+Instagram:
+
+* Meta Webhooks compatible structure
+
+==================================================
+ARCHITECTURE
+============
+
+Use this folder structure:
+
+cmd/
+bot/
+main.go
+
+internal/
+bot/
+handler.go
+worker.go
+
+service/
+bot_service.go
+meta_service.go
+
+repository/
+postgres.go
+redis.go
+
+telegram/
+client.go
+
+model/
+update.go
+movie.go
+user.go
+telegram.go
+
+config/
+config.go
+
+locales/
+uz.json
+ru.json
+en.json
+
+==================================================
+DATABASE DESIGN
+===============
+
+Create migrations automatically on startup.
+
+TABLE: users
+
+* id BIGINT PRIMARY KEY
+* username TEXT
+* language_code TEXT
+* created_at TIMESTAMP
+
+TABLE: movies
+
+* id SERIAL PRIMARY KEY
+* code VARCHAR UNIQUE
+* tg_file_id TEXT NOT NULL
+* caption TEXT
+* created_at TIMESTAMP
+
+TABLE: reels
+
+* id SERIAL PRIMARY KEY
+* reel_link TEXT UNIQUE
+* movie_id INTEGER REFERENCES movies(id)
+* created_at TIMESTAMP
+
+TABLE: channels
+
+* id SERIAL PRIMARY KEY
+* tg_channel_id BIGINT UNIQUE
+* invite_link TEXT
+* is_active BOOLEAN
+
+==================================================
+IMPORTANT TELEGRAM LOGIC
+========================
+
+When admin sends a video:
+
+* bot extracts Telegram file_id
+* bot replies with extracted file_id
+
+Admin command example:
+/add_movie FILE_ID Movie Caption
+
+Bot:
+
+* generates unique movie code
+* saves movie
+* replies:
+  Movie saved successfully
+  Code: MOV2045
+
+==================================================
+IMPORTANT INSTAGRAM FLOW
+========================
+
+Meta webhook endpoint:
+POST /api/meta/reel
+
+Payload:
 {
-  "reel_link": "https://www.instagram.com/reel/ABC123/",
-  "movie_code": "MOV4829",
-  "auth_token": "secret_token"
-}
-Auth tekshiruvi: Authorization: Bearer {META_WEBHOOK_SECRET} header yoki body da auth_token. Logic: auth_token tekshiriladi (cfg.MetaWebhookSecret bilan), movie_code bo'yicha movies jadvaldan movie_id topiladi, reels jadvaliga (reel_link, movie_id) saqlanadi, 200 OK qaytariladi. main.go da route qo'shiladi: mux.HandleFunc("/api/meta/reel", botHandler.MetaReelHandler).
-
-9. SETMENUBUTTON — FAQAT ADMIN UCHUN, TO'G'RI URL BILAN
-Hozirgi muammo: bot start bo'lganda global SetMenuButton chaqiriladi va cfg.WebhookURL ishlatiladi — bu noto'g'ri, chunki WebhookURL backend URL, lekin TMA uchun frontend URL kerak, va menu button barcha userlarga ko'rinib qoladi.
-Kerakli: NewBotService ichidagi global SetMenuButton chaqiruvini o'chirish kerak. Uning o'rniga SetMenuButtonForChat(chatID int64, webAppURL string) metodi qo'shiladi. Bu metod faqat admin til tanlaganda chaqiriladi, o'sha admin ning chat_id bilan. client.go da metod:
-func (c *TelegramClient) SetMenuButtonForChat(chatID int64, webAppURL string) error {
-    apiURL := fmt.Sprintf("%s/setChatMenuButton", c.apiURL)
-    payload := map[string]interface{}{
-        "chat_id": chatID,
-        "menu_button": map[string]interface{}{
-            "type": "web_app",
-            "text": "🎬 Admin Panel",
-            "web_app": map[string]interface{}{
-                "url": webAppURL,
-            },
-        },
-    }
-    return c.postJSON(context.Background(), apiURL, payload)
+"movie_code": "MOV2045",
+"reel_link": "https://instagram.com/reel/abc123"
 }
 
-10. SENDREPLYKEYBOARD — YANGI METOD
-client.go ga SendReplyKeyboard metodi qo'shilishi kerak:
-func (c *TelegramClient) SendReplyKeyboard(ctx context.Context, chatID int64, text string, buttons [][]string) error
-Bu metod ReplyKeyboardMarkup yuboradi, resize_keyboard: true, persistent: true bo'lishi kerak.
+Backend:
 
-11. I18N — TO'LIQ LOCALES
-Hech qanday hardcoded tekst bo'lmasligi kerak. Hammasi T(lang, key) orqali chiqishi kerak. Uchala tilda (uz, ru, en) quyidagi keylar bo'lishi kerak: welcome_user, welcome_admin, lang_set_user, lang_set_admin, stats_text (placeholder lar: {users}, {movies}, {channels}), force_sub, check_sub_btn, sub_success, not_subbed_yet, movie_not_found, send_link, movie_added (placeholder lar: {code}, {caption}), add_movie_hint, btn_stats, btn_movies, btn_channels, btn_add_movie, btn_web_panel.
+* verifies secret token
+* finds movie by code
+* stores reel mapping
 
-uz.json namunasi:
-{
-  "welcome_user": "🎬 Movie Linker\nInstagram reels orqali kinolarni toping!\n\nTilni tanlang:",
-  "welcome_admin": "🎬 Movie Linker — Admin Panel\nXush kelibsiz!",
-  "lang_set_user": "✅ Til o'rnatildi. Instagram reel linkini yuboring.",
-  "lang_set_admin": "✅ Admin sifatida kirdingiz.",
-  "stats_text": "📊 Bot Statistikasi:\n👥 Foydalanuvchilar: {users}\n🎬 Kinolar: {movies}\n📢 Kanallar: {channels}",
-  "force_sub": "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:",
-  "check_sub_btn": "✅ Tekshirish",
-  "sub_success": "✅ Rahmat! Endi reel linkini yuboring.",
-  "not_subbed_yet": "❌ Siz hali barcha kanallarga obuna bo'lmadingiz!",
-  "movie_not_found": "❌ Kino topilmadi.",
-  "send_link": "📎 Instagram reel linkini yuboring.",
-  "movie_added": "✅ Kino qo'shildi!\n🔑 Kod: {code}\n📝 Caption: {caption}",
-  "add_movie_hint": "📹 Kino qo'shish uchun:\n1. Private kanalga videoni yuboring\n2. Menga /add_movie <file_id> <caption> yuboring",
-  "btn_stats": "📊 Statistika",
-  "btn_movies": "🎬 Kinolar",
-  "btn_channels": "📢 Kanallar",
-  "btn_add_movie": "➕ Kino qo'shish",
-  "btn_web_panel": "🌐 Web Panel"
-}
+==================================================
+IMPORTANT USER FLOW
+===================
 
-FAYLLAR RO'YXATI — NIMA O'ZGARADI
-config/config.go — FrontendURL va MetaWebhookSecret fieldlarini Config structiga qo'shish.
-internal/model/models.go — InlineButton.URL field qo'shish.
-internal/bot/service.go — to'liq refactor: /start, til tanlash, admin keyboard, force sub, check_sub, handleUserMovieRequest (reel qidiruv), /add_movie (kod generatsiya).
-internal/bot/handler.go — MetaReelHandler yangi endpoint, main.go da route.
-internal/repository/postgres.go — GetMovieByCode, SaveReel, GetMovieByReelLink, GenerateUniqueMovieCode metodlari, migrate() da yangi jadvallar.
-pkg/telegram/client.go — SetMenuButtonForChat, SendReplyKeyboard yangi metodlar, SendInlineKeyboard update (URL support).
-locales/uz.json, ru.json, en.json — to'liq to'ldirish.
+User sends:
+https://instagram.com/reel/abc123
 
-MUHIM QOIDALAR
-Hech qanday hardcoded tekst bo'lmasin, hammasi T(lang, key) orqali. Admin tekshiruvi cfg.AdminIDs []int64 orqali ishlaydi. Video hech qachon yuklanmasin, faqat file_id ishlatilsin. Kanal linki hech qachon userga ko'rinmasin. check_sub callback da Redis cache invalidate qilinsin. SetMenuButton faqat admin uchun va cfg.FrontendURL bilan chaqirilsin. Kodlar unique bo'lishi uchun generatsiyada DB ga tekshiruv qilinsin.
+Bot:
+
+* normalizes URL
+* finds reel
+* finds linked movie
+* gets tg_file_id
+* sends video via Telegram sendVideo
+
+NEVER:
+
+* send reel URL into sendVideo
+* send Instagram link into sendVideo
+
+The video parameter MUST ALWAYS be Telegram file_id.
+
+==================================================
+VERY IMPORTANT BUG TO PREVENT
+=============================
+
+Prevent this Telegram API error:
+
+400 Bad Request:
+wrong type of the web page content
+
+Reason:
+Telegram sendVideo was receiving:
+
+* Instagram URL
+  instead of:
+* Telegram file_id
+
+Ensure architecture prevents this completely.
+
+==================================================
+REDIS CACHE
+===========
+
+Cache:
+
+* subscription checks
+* user language
+
+==================================================
+FORCE SUBSCRIPTION
+==================
+
+Bot supports mandatory channel subscription.
+
+Before sending movie:
+
+* check all required channels
+* if not subscribed:
+  show inline keyboard with channel links
+
+==================================================
+MULTI LANGUAGE
+==============
+
+Support:
+
+* Uzbek
+* Russian
+* English
+
+Use locale JSON files.
+
+==================================================
+WORKER POOL
+===========
+
+Use worker pool:
+
+* buffered update queue
+* concurrent update processing
+* runtime.NumCPU()
+
+==================================================
+WEBHOOKS
+========
+
+Telegram webhook:
+POST /webhook
+
+Meta webhook:
+POST /api/meta/reel
+
+Health:
+GET /health
+
+==================================================
+DOCKER
+======
+
+Generate:
+
+* Dockerfile
+* docker-compose.yml
+* automation.sh
+
+automation.sh must:
+
+* launch ngrok
+* inject webhook URLs into .env
+* restart docker
+* auto configure Telegram webhook
+
+==================================================
+IMPORTANT CODING STYLE
+======================
+
+Code MUST:
+
+* be complete
+* compile successfully
+* avoid circular dependencies
+* avoid placeholder functions
+* include proper error handling
+* include logging
+* include context.Context
+* use clean separation of concerns
+
+==================================================
+OUTPUT REQUIREMENTS
+===================
+
+Generate ALL files completely.
+Do NOT summarize.
+Do NOT explain.
+Output FULL source code file-by-file.
+
+Every file must be complete and production-ready.

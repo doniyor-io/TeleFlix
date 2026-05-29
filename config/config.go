@@ -1,45 +1,87 @@
 package config
 
 import (
-	"log"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Port              string  `mapstructure:"PORT"`
-	Env               string  `mapstructure:"ENV"`
-	TelegramBotToken  string  `mapstructure:"TELEGRAM_BOT_TOKEN"`
-	AdminIDs          []int64 `mapstructure:"ADMIN_IDS"`
-	DatabaseURL       string  `mapstructure:"DATABASE_URL"`
-	RedisURL          string  `mapstructure:"REDIS_URL"`
-	WebhookURL        string  `mapstructure:"WEBHOOK_URL"`
-	FrontendURL       string  `mapstructure:"FRONTEND_URL"`
-	MetaWebhookSecret string  `mapstructure:"META_WEBHOOK_SECRET"`
-	BotName           string  `mapstructure:"BOT_NAME"`
+	Port string
+	Env  string
+
+	TelegramBotToken string
+
+	AdminIDs []int64
+
+	DatabaseURL string
+	RedisURL    string
+
+	WebhookURL  string
+	FrontendURL string
+
+	BotName string
+
+	BridgeSecret string
+
+	InstagramAccessToken   string
+	InstagramBusinessID    string
+	MetaWebhookVerifyToken string
+	MetaWebhookSecret      string
 }
 
-func LoadConfig() (*Config, error) {
+func Load() (*Config, error) {
 	viper.SetConfigFile(".env")
+
 	viper.AutomaticEnv()
 
-	if err := viper.ReadInConfig(); err != nil {
-		log.Printf("[WARN] .env not found, OS Env will be used")
+	_ = viper.ReadInConfig()
+
+	cfg := &Config{
+		Port:                   viper.GetString("PORT"),
+		Env:                    viper.GetString("ENV"),
+		TelegramBotToken:       viper.GetString("TELEGRAM_BOT_TOKEN"),
+		DatabaseURL:            viper.GetString("DATABASE_URL"),
+		RedisURL:               viper.GetString("REDIS_URL"),
+		WebhookURL:             viper.GetString("WEBHOOK_URL"),
+		FrontendURL:            viper.GetString("FRONTEND_URL"),
+		BotName:                viper.GetString("BOT_NAME"),
+		BridgeSecret:           viper.GetString("BRIDGE_SECRET"),
+		InstagramAccessToken:   viper.GetString("INSTAGRAM_ACCESS_TOKEN"),
+		InstagramBusinessID:    viper.GetString("INSTAGRAM_BUSINESS_ID"),
+		MetaWebhookVerifyToken: viper.GetString("META_WEBHOOK_VERIFY_TOKEN"),
+		MetaWebhookSecret:      viper.GetString("META_WEBHOOK_SECRET"),
 	}
 
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, err
+	admins := viper.GetString("ADMIN_IDS")
+
+	if admins != "" {
+		for _, raw := range strings.Split(admins, ",") {
+			raw = strings.TrimSpace(raw)
+
+			var id int64
+
+			_, err := fmt.Sscan(raw, &id)
+			if err == nil {
+				cfg.AdminIDs = append(cfg.AdminIDs, id)
+			}
+		}
 	}
 
-	return &cfg, nil
+	if cfg.Port == "" {
+		cfg.Port = "9090"
+	}
+
+	return cfg, nil
 }
 
-func (c *Config) IsAdmin(chatID int64) bool {
-	for _, adminID := range c.AdminIDs {
-		if adminID == chatID {
+func (c *Config) IsAdmin(userID int64) bool {
+	for _, id := range c.AdminIDs {
+		if id == userID {
 			return true
 		}
 	}
+
 	return false
 }

@@ -21,5 +21,12 @@
   "no_channel": "\uD83C\uDFAC No channel found",
   "movie_add_format_error": "❌ Invalid format!\nUsage: /add_movie <file_id> [caption]",
   "movie_code_generation_error": "❌ Error occurred during code generation.",
-  "movie_db_write_error": "❌ There was a problem writing to the database."
+  "movie_db_write_error": "❌ There was a problem writing to the database.",
+  "movie_delivery_error": "❌ Could not send the movie. Please contact the administrator.",
+  "subscription_check_error": "❌ Subscription check failed. Please try again later.",
+  "contact_required": "Please share your phone number to use this bot.",
+  "contact_button": "📱 Share Contact",
+  "contact_saved": "✅ Contact saved.",
+  "contact_invalid": "❌ Please share only your own Telegram contact.",
+  "contact_save_error": "❌ Could not save your contact. Please try again."
 }

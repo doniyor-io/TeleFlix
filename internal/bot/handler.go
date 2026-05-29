@@ -1,12 +1,18 @@
 package bot
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+
 	"tg-movie-bot/internal/model"
+	"tg-movie-bot/internal/repository"
 )
 
 type BotHandler struct {
@@ -37,19 +43,74 @@ func (h *BotHandler) WebhookHTTPHandler(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
+type MetaWebhookPayload struct {
+	Object string `json:"object"`
+	Entry  []struct {
+		ID      string `json:"id"`
+		Time    int64  `json:"time"`
+		Changes []struct {
+			Field string `json:"field"`
+			Value struct {
+				MediaID   string `json:"media_id"`
+				ID        string `json:"id"`
+				Text      string `json:"text"`
+				PostID    string `json:"post_id"`
+				Permalink string `json:"permalink"`
+				Caption   string `json:"caption"`
+			} `json:"value"`
+		} `json:"changes"`
+	} `json:"entry"`
+}
+
+// Fallback struct for the simplified prompt.txt payload
+type SimpleReelPayload struct {
+	ReelLink  string `json:"reel_link"`
+	MovieCode string `json:"movie_code"`
+	AuthToken string `json:"auth_token"`
+}
+
 func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		mode := r.URL.Query().Get("hub.mode")
+		token := r.URL.Query().Get("hub.verify_token")
+		challenge := r.URL.Query().Get("hub.challenge")
+
+		if mode == "subscribe" && token == h.botService.cfg.MetaWebhookVerifyToken {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(challenge))
+			return
+		}
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req struct {
-		ReelLink  string `json:"reel_link"`
-		MovieCode string `json:"movie_code"`
-		AuthToken string `json:"auth_token"`
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Try the raw Meta Webhook Payload first
+	var metaPayload MetaWebhookPayload
+	err = json.Unmarshal(bodyBytes, &metaPayload)
+
+	if err == nil && metaPayload.Object == "instagram" && len(metaPayload.Entry) > 0 {
+		// Valid Meta Webhook
+		h.processMetaWebhook(metaPayload)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("EVENT_RECEIVED"))
+		return
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Try simplified payload from prompt.txt
+	var req SimpleReelPayload
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		log.Printf("[META REEL ERROR] failed to decode request: %v", err)
 		http.Error(w, "Bad request body", http.StatusBadRequest)
 		return
@@ -67,13 +128,19 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	movieID, _, _, err := h.botService.pgRepo.GetMovieByCode(ctx, req.MovieCode)
+	movie, err := h.botService.pgRepo.GetMovieByCode(ctx, req.MovieCode)
 	if err != nil {
 		http.Error(w, "Movie code not found in system", http.StatusNotFound)
 		return
 	}
 
-	err = h.botService.pgRepo.SaveReel(ctx, req.ReelLink, movieID)
+	shortcode := repository.ExtractShortcode(req.ReelLink)
+	if shortcode == "" {
+		http.Error(w, "Invalid reel link", http.StatusBadRequest)
+		return
+	}
+
+	err = h.botService.pgRepo.CreateReel(ctx, shortcode, req.ReelLink, int64(movie.ID))
 	if err != nil {
 		http.Error(w, "Database injection failure", http.StatusInternalServerError)
 		return
@@ -82,6 +149,80 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Reel successfully linked to movie"})
+}
+
+func (h *BotHandler) processMetaWebhook(payload MetaWebhookPayload) {
+	for _, entry := range payload.Entry {
+		for _, change := range entry.Changes {
+			caption := change.Value.Text
+			if caption == "" {
+				caption = change.Value.Caption
+			}
+
+			// Look for #MOVxxxx in caption
+			words := strings.Fields(caption)
+			var movieCode string
+			for _, w := range words {
+				if strings.HasPrefix(w, "#MOV") {
+					movieCode = strings.TrimPrefix(w, "#")
+					break
+				}
+			}
+
+			if movieCode == "" {
+				continue // No movie code in this webhook
+			}
+
+			permalink := change.Value.Permalink
+			mediaID := change.Value.MediaID
+			if mediaID == "" {
+				mediaID = change.Value.ID
+			}
+
+			if permalink == "" && mediaID != "" {
+				// We need to fetch the permalink from Graph API
+				fetchedLink := h.fetchMediaPermalink(mediaID)
+				if fetchedLink != "" {
+					permalink = fetchedLink
+				}
+			}
+
+			if permalink != "" {
+				ctx := context.Background()
+				movie, err := h.botService.pgRepo.GetMovieByCode(ctx, movieCode)
+				if err == nil {
+					shortcode := repository.ExtractShortcode(permalink)
+					if shortcode != "" {
+						_ = h.botService.pgRepo.CreateReel(ctx, shortcode, permalink, int64(movie.ID))
+						log.Printf("[META WEBHOOK] Successfully linked %s to %s", permalink, movieCode)
+					}
+				}
+			}
+		}
+	}
+}
+
+func (h *BotHandler) fetchMediaPermalink(mediaID string) string {
+	token := h.botService.cfg.InstagramAccessToken
+	if token == "" {
+		return ""
+	}
+
+	url := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=permalink&access_token=%s", mediaID, token)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("[GRAPH API ERROR] %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Permalink string `json:"permalink"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
+		return res.Permalink
+	}
+	return ""
 }
 
 func (h *BotHandler) CorsMiddleware(next http.Handler) http.Handler {
@@ -105,13 +246,13 @@ func (h *BotHandler) GetStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	usersCount, _ := h.botService.pgRepo.GetTotalUsersCount(ctx)
-	moviesCount, _ := h.botService.pgRepo.GetTotalMoviesCount(ctx)
-	channels, _ := h.botService.pgRepo.GetActiveChannels(ctx)
+	stats, _ := h.botService.pgRepo.GetStatistics(ctx)
+	channels, _ := h.botService.pgRepo.GetChannels(ctx)
 
 	resp := map[string]interface{}{
-		"total_users":     usersCount,
-		"total_movies":    moviesCount,
+		"total_users":     stats["users"],
+		"total_movies":    stats["movies"],
+		"total_reels":     stats["reels"],
 		"active_channels": len(channels),
 	}
 
@@ -125,7 +266,7 @@ func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		channels, err := h.botService.pgRepo.GetActiveChannels(ctx)
+		channels, err := h.botService.pgRepo.GetChannels(ctx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -192,7 +333,7 @@ func (h *BotHandler) GetMoviesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	movies, err := h.botService.pgRepo.GetAllMovies(ctx)
+	movies, err := h.botService.pgRepo.GetMovies(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

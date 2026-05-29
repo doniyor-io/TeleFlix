@@ -1,69 +1,99 @@
-version: '3.8'
-
 services:
+
   postgres:
-    image: postgres:15-alpine
-    container_name: tg_bot_postgres
+    image: postgres:16-alpine
+    container_name: movie_postgres
+
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: linux
       POSTGRES_DB: moviedb
+
     ports:
       - "5432:5432"
+
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d moviedb"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+    restart: always
+
     networks:
-      - bot_network
+      - movie_network
 
   redis:
-    image: redis:7.2-alpine
-    container_name: tg_bot_redis
-    ports:
-      - "6380:6379"
-    volumes:
-      - redisdata:/data
-    networks:
-      - bot_network
+    image: redis:7-alpine
+    container_name: movie_redis
 
-  bot_app:
-    build: .
-    container_name: tg_cinema_bot
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis_data:/data
+
+    restart: always
+
+    networks:
+      - movie_network
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: movie_bot
+
     ports:
       - "9090:9090"
+
     env_file:
       - .env
+
+    environment:
+      FRONTEND_INTERNAL_URL: http://frontend:80
+
     depends_on:
       postgres:
         condition: service_healthy
+
       redis:
         condition: service_started
+
+      frontend:
+        condition: service_started
+
+    restart: always
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     networks:
-      - bot_network
+      - movie_network
 
   frontend:
     build:
       context: ../movie-linker-tma
-      args:
-        - VITE_API_URL=${NGROK_URL}
-    container_name: tg_bot_frontend
+      dockerfile: Dockerfile
+
+    container_name: movie_linker_tma
+
     ports:
       - "3000:80"
-    env_file:
-      - .env
-    depends_on:
-      - bot_app
+
+    restart: always
+
     networks:
-      - bot_network
+      - movie_network
 
 volumes:
-  pgdata:
-  redisdata:
+  postgres_data:
+  redis_data:
 
 networks:
-  bot_network:
+  movie_network:
     driver: bridge
