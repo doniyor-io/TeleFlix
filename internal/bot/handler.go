@@ -128,7 +128,7 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	movie, err := h.botService.pgRepo.GetMovieByCode(ctx, req.MovieCode)
+	movie, err := h.botService.pgRepo.GetMovieByCode(ctx, strings.Trim(strings.TrimSpace(req.MovieCode), "#"))
 	if err != nil {
 		http.Error(w, "Movie code not found in system", http.StatusNotFound)
 		return
@@ -159,12 +159,13 @@ func (h *BotHandler) processMetaWebhook(payload MetaWebhookPayload) {
 				caption = change.Value.Caption
 			}
 
-			// Look for #MOVxxxx in caption
+			// Look for a numeric movie code hashtag, for example #123456.
 			words := strings.Fields(caption)
 			var movieCode string
 			for _, w := range words {
-				if strings.HasPrefix(w, "#MOV") {
-					movieCode = strings.TrimPrefix(w, "#")
+				tag := strings.Trim(strings.TrimPrefix(w, "#"), ".,;:!?()[]{}")
+				if strings.HasPrefix(w, "#") && isMovieCode(tag) {
+					movieCode = tag
 					break
 				}
 			}
@@ -260,6 +261,22 @@ func (h *BotHandler) GetStatsHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (h *BotHandler) TopMoviesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	movies, err := h.botService.pgRepo.GetTopMovies(r.Context(), 10)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(movies)
+}
+
 func (h *BotHandler) ChannelsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	ctx := r.Context()
@@ -327,6 +344,25 @@ func (h *BotHandler) DeleteChannelHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (h *BotHandler) GetMoviesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var req repository.CreateMovieInput
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		movie, err := h.botService.pgRepo.CreateMovie(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(movie)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -341,4 +377,65 @@ func (h *BotHandler) GetMoviesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(movies)
+}
+
+func (h *BotHandler) DeleteMovieHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "Movie code is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.botService.pgRepo.DeleteMovie(r.Context(), code); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (h *BotHandler) LinkReelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		MovieCode string `json:"movie_code"`
+		ReelURL   string `json:"reel_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.botService.linkReelToMovie(r.Context(), req.MovieCode, req.ReelURL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (h *BotHandler) UsersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	users, err := h.botService.pgRepo.SearchUsers(r.Context(), r.URL.Query().Get("q"), 50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(users)
 }

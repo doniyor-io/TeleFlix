@@ -6,7 +6,11 @@ type Movie struct {
 	ID                int64     `json:"id"`
 	MovieCode         string    `json:"code"`
 	TelegramFileID    string    `json:"telegram_file_id"`
+	Title             string    `json:"title"`
+	Rating            string    `json:"rating,omitempty"`
+	Language          string    `json:"language,omitempty"`
 	ReelURL           string    `json:"reel_url,omitempty"`
+	RequestCount      int64     `json:"request_count"`
 	MessageID         int64     `json:"message_id"`
 	Caption           string    `json:"caption,omitempty"`
 	TelegramChannelID int64     `json:"telegram_channel_id,omitempty"`

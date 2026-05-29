@@ -98,8 +98,15 @@ func (r *PostgresRepository) migrate(ctx context.Context) error {
 		`,
 		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS code VARCHAR(30);`,
 		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS telegram_file_id TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS title TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS rating TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS language TEXT;`,
 		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS caption TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS request_count BIGINT DEFAULT 0;`,
 		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();`,
+		`UPDATE movies SET title = COALESCE(NULLIF(title, ''), NULLIF(caption, ''), code, id::TEXT) WHERE title IS NULL OR title = '';`,
+		`ALTER TABLE movies ALTER COLUMN title SET NOT NULL;`,
+		`ALTER TABLE movies ALTER COLUMN request_count SET DEFAULT 0;`,
 		`
 		DO $$
 		BEGIN
@@ -189,6 +196,12 @@ func (r *PostgresRepository) UserExists(ctx context.Context, userID int64) (bool
 	return exists, err
 }
 
+func (r *PostgresRepository) UserHasContact(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND phone_number IS NOT NULL AND phone_number <> '')`, userID).Scan(&exists)
+	return exists, err
+}
+
 func (r *PostgresRepository) SaveUserContact(
 	ctx context.Context,
 	userID int64,
@@ -250,9 +263,7 @@ func (r *PostgresRepository) GenerateMovieCode() (string, error) {
 
 	var builder strings.Builder
 
-	builder.WriteString("MOV")
-
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
 			return "", err
@@ -264,25 +275,50 @@ func (r *PostgresRepository) GenerateMovieCode() (string, error) {
 	return builder.String(), nil
 }
 
+type CreateMovieInput struct {
+	FileID   string `json:"telegram_file_id"`
+	Title    string `json:"title"`
+	Rating   string `json:"rating"`
+	Language string `json:"language"`
+	Caption  string `json:"caption"`
+}
+
 func (r *PostgresRepository) CreateMovie(
 	ctx context.Context,
-	fileID string,
-	caption string,
+	input CreateMovieInput,
 ) (*model.Movie, error) {
+	input.Title = strings.TrimSpace(input.Title)
+	input.FileID = strings.TrimSpace(input.FileID)
+	input.Rating = strings.TrimSpace(input.Rating)
+	input.Language = strings.TrimSpace(input.Language)
+	input.Caption = strings.TrimSpace(input.Caption)
+	if input.Title == "" {
+		return nil, errors.New("movie title is required")
+	}
+	if input.FileID == "" {
+		return nil, errors.New("telegram file id is required")
+	}
+
 	query := `
 	INSERT INTO movies (
 		code,
 		telegram_file_id,
+		title,
+		rating,
+		language,
 		caption
 	)
-	VALUES ($1, $2, $3)
+	VALUES ($1, $2, $3, $4, $5, $6)
 	RETURNING id, created_at
 	`
 
 	var movie model.Movie
 
-	movie.TelegramFileID = fileID
-	movie.Caption = caption
+	movie.TelegramFileID = input.FileID
+	movie.Title = input.Title
+	movie.Rating = input.Rating
+	movie.Language = input.Language
+	movie.Caption = input.Caption
 
 	for attempt := 0; attempt < 10; attempt++ {
 		code, err := r.GenerateMovieCode()
@@ -295,8 +331,11 @@ func (r *PostgresRepository) CreateMovie(
 			ctx,
 			query,
 			code,
-			fileID,
-			caption,
+			input.FileID,
+			input.Title,
+			input.Rating,
+			input.Language,
+			input.Caption,
 		).Scan(
 			&movie.ID,
 			&movie.CreatedAt,
@@ -314,6 +353,17 @@ func (r *PostgresRepository) CreateMovie(
 	return nil, errors.New("failed to generate a unique movie code")
 }
 
+func (r *PostgresRepository) DeleteMovie(ctx context.Context, code string) error {
+	result, err := r.Pool.Exec(ctx, `DELETE FROM movies WHERE code = $1`, strings.TrimSpace(code))
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("movie not found")
+	}
+	return nil
+}
+
 func (r *PostgresRepository) GetMovieByCode(
 	ctx context.Context,
 	code string,
@@ -324,7 +374,11 @@ func (r *PostgresRepository) GetMovieByCode(
 		id,
 		code,
 		telegram_file_id,
+		title,
+		rating,
+		language,
 		caption,
+		request_count,
 		created_at
 	FROM movies
 	WHERE code = $1
@@ -340,7 +394,11 @@ func (r *PostgresRepository) GetMovieByCode(
 		&movie.ID,
 		&movie.MovieCode,
 		&movie.TelegramFileID,
+		&movie.Title,
+		&movie.Rating,
+		&movie.Language,
 		&movie.Caption,
+		&movie.RequestCount,
 		&movie.CreatedAt,
 	)
 
@@ -392,7 +450,11 @@ func (r *PostgresRepository) GetMovieByShortcode(
 		m.id,
 		m.code,
 		m.telegram_file_id,
+		m.title,
+		m.rating,
+		m.language,
 		m.caption,
+		m.request_count,
 		m.created_at
 	FROM reels r
 	INNER JOIN movies m
@@ -410,7 +472,11 @@ func (r *PostgresRepository) GetMovieByShortcode(
 		&movie.ID,
 		&movie.MovieCode,
 		&movie.TelegramFileID,
+		&movie.Title,
+		&movie.Rating,
+		&movie.Language,
 		&movie.Caption,
+		&movie.RequestCount,
 		&movie.CreatedAt,
 	)
 
@@ -499,6 +565,7 @@ func (r *PostgresRepository) DeleteChannel(
 	ctx context.Context,
 	channelID int64,
 ) error {
+	channelID = normalizeStoredChannelID(channelID)
 
 	query := `
 	DELETE FROM channels
@@ -531,7 +598,11 @@ func (r *PostgresRepository) GetMovies(
 		id,
 		code,
 		telegram_file_id,
+		title,
+		rating,
+		language,
 		caption,
+		request_count,
 		created_at,
 		(
 			SELECT reel_url
@@ -561,7 +632,11 @@ func (r *PostgresRepository) GetMovies(
 			&movie.ID,
 			&movie.MovieCode,
 			&movie.TelegramFileID,
+			&movie.Title,
+			&movie.Rating,
+			&movie.Language,
 			&movie.Caption,
+			&movie.RequestCount,
 			&movie.CreatedAt,
 			&reelURL,
 		)
@@ -578,6 +653,118 @@ func (r *PostgresRepository) GetMovies(
 	}
 
 	return movies, nil
+}
+
+func (r *PostgresRepository) IncrementMovieRequest(ctx context.Context, movieID int64) error {
+	_, err := r.Pool.Exec(ctx, `UPDATE movies SET request_count = COALESCE(request_count, 0) + 1 WHERE id = $1`, movieID)
+	return err
+}
+
+func (r *PostgresRepository) GetTopMovies(ctx context.Context, limit int) ([]model.Movie, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+
+	query := `
+	SELECT
+		id,
+		code,
+		telegram_file_id,
+		title,
+		rating,
+		language,
+		caption,
+		request_count,
+		created_at,
+		(
+			SELECT reel_url
+			FROM reels
+			WHERE reels.movie_id = movies.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) AS reel_url
+	FROM movies
+	WHERE COALESCE(request_count, 0) > 0
+	ORDER BY request_count DESC, created_at DESC
+	LIMIT $1
+	`
+
+	rows, err := r.Pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var movies []model.Movie
+	for rows.Next() {
+		var movie model.Movie
+		var reelURL sql.NullString
+		if err := rows.Scan(
+			&movie.ID,
+			&movie.MovieCode,
+			&movie.TelegramFileID,
+			&movie.Title,
+			&movie.Rating,
+			&movie.Language,
+			&movie.Caption,
+			&movie.RequestCount,
+			&movie.CreatedAt,
+			&reelURL,
+		); err != nil {
+			return nil, err
+		}
+		if reelURL.Valid {
+			movie.ReelURL = reelURL.String
+		}
+		movies = append(movies, movie)
+	}
+
+	return movies, nil
+}
+
+func (r *PostgresRepository) SearchUsers(ctx context.Context, queryText string, limit int) ([]model.DBUser, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+
+	q := "%" + strings.ToLower(strings.TrimSpace(queryText)) + "%"
+	query := `
+	SELECT id, username, COALESCE(phone_number, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), language_code, created_at
+	FROM users
+	WHERE $1 = '%%'
+		OR LOWER(COALESCE(username, '')) LIKE $1
+		OR LOWER(COALESCE(first_name, '')) LIKE $1
+		OR LOWER(COALESCE(last_name, '')) LIKE $1
+		OR COALESCE(phone_number, '') LIKE $1
+		OR id::TEXT LIKE $1
+	ORDER BY created_at DESC
+	LIMIT $2
+	`
+
+	rows, err := r.Pool.Query(ctx, query, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []model.DBUser
+	for rows.Next() {
+		var user model.DBUser
+		if err := rows.Scan(
+			&user.ID,
+			&user.Username,
+			&user.PhoneNumber,
+			&user.FirstName,
+			&user.LastName,
+			&user.LanguageCode,
+			&user.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
 }
 
 func (r *PostgresRepository) GetStatistics(

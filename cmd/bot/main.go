@@ -69,6 +69,10 @@ func main() {
 	mux.HandleFunc("/api/admin/channels", botHandler.ChannelsHandler)
 	mux.HandleFunc("/api/admin/channels/delete", botHandler.DeleteChannelHandler)
 	mux.HandleFunc("/api/admin/movies", botHandler.GetMoviesHandler)
+	mux.HandleFunc("/api/admin/movies/delete", botHandler.DeleteMovieHandler)
+	mux.HandleFunc("/api/admin/movies/link-reel", botHandler.LinkReelHandler)
+	mux.HandleFunc("/api/admin/movies/top", botHandler.TopMoviesHandler)
+	mux.HandleFunc("/api/admin/users", botHandler.UsersHandler)
 
 	frontendURLStr := os.Getenv("FRONTEND_INTERNAL_URL")
 	if frontendURLStr == "" {

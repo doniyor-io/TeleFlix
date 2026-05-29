@@ -40,6 +40,15 @@ func (c *TelegramClient) SendMessage(
 	chatID int64,
 	text string,
 ) error {
+	_, err := c.SendMessageWithResult(ctx, chatID, text)
+	return err
+}
+
+func (c *TelegramClient) SendMessageWithResult(
+	ctx context.Context,
+	chatID int64,
+	text string,
+) (int, error) {
 
 	url := fmt.Sprintf("%s/sendMessage", c.baseURL)
 
@@ -48,7 +57,21 @@ func (c *TelegramClient) SendMessage(
 		"text":    text,
 	}
 
-	return c.postJSON(ctx, url, payload)
+	body, err := c.postJSONWithResponse(ctx, url, payload)
+	if err != nil {
+		return 0, err
+	}
+
+	var response struct {
+		Result struct {
+			MessageID int `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return 0, err
+	}
+
+	return response.Result.MessageID, nil
 }
 
 func (c *TelegramClient) SendVideo(
@@ -219,6 +242,21 @@ func (c *TelegramClient) DeleteMessage(
 	payload := map[string]interface{}{
 		"chat_id":    chatID,
 		"message_id": messageID,
+	}
+
+	return c.postJSON(ctx, url, payload)
+}
+
+func (c *TelegramClient) PinChatMessage(
+	ctx context.Context,
+	chatID int64,
+	messageID int,
+) error {
+	url := fmt.Sprintf("%s/pinChatMessage", c.baseURL)
+	payload := map[string]interface{}{
+		"chat_id":              chatID,
+		"message_id":           messageID,
+		"disable_notification": true,
 	}
 
 	return c.postJSON(ctx, url, payload)
