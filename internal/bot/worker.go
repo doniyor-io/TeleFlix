@@ -179,7 +179,7 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 
 		case T(userLang, "btn_web_panel"):
 			err := s.tgClient.SendInlineKeyboard(ctx, chatID, "Web Panelni ochish:", [][]model.InlineButton{{
-				{Text: "Open WebApp", URL: s.frontendURL()},
+				{Text: "Open WebApp", WebApp: &model.WebAppInfo{URL: s.frontendURL()}},
 			}})
 			if err != nil {
 				return
@@ -202,8 +202,11 @@ func (s *BotService) handleMessage(ctx context.Context, workerID int, msg *model
 		var welcomeTxt string
 		if s.isAdmin(userID) {
 			welcomeTxt = T(userLang, "welcome_admin")
+			if err := s.tgClient.SetMenuButtonForChat(ctx, chatID, s.frontendURL()); err != nil {
+				log.Printf("[TG SEND ERROR] set admin menu button failed for chat %d: %v", chatID, err)
+			}
 		} else {
-			welcomeTxt = T(userLang, "welcome_user")
+			welcomeTxt = T("uz", "welcome_user")
 			if err := s.tgClient.ResetMenuButtonForChat(ctx, chatID); err != nil {
 				log.Printf("[TG SEND ERROR] reset menu button failed for chat %d: %v", chatID, err)
 			}
@@ -765,10 +768,18 @@ func (s *BotService) isAdmin(userID int64) bool {
 }
 
 func (s *BotService) frontendURL() string {
-	if strings.TrimSpace(s.cfg.FrontendURL) != "" {
-		return s.cfg.FrontendURL
+	if strings.TrimSpace(s.cfg.WebhookURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(s.cfg.WebhookURL), "/") + "/"
 	}
-	return s.cfg.WebhookURL
+	return strings.TrimRight(strings.TrimSpace(s.cfg.FrontendURL), "/") + "/"
+}
+
+func (s *BotService) SyncAdminMenuButtons(ctx context.Context) {
+	for _, adminID := range s.cfg.AdminIDs {
+		if err := s.tgClient.SetMenuButtonForChat(ctx, adminID, s.frontendURL()); err != nil {
+			log.Printf("[TG SEND ERROR] sync admin menu button failed for chat %d: %v", adminID, err)
+		}
+	}
 }
 
 func (s *BotService) PushUpdate(u model.Update) {

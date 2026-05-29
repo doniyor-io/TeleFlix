@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -54,6 +55,8 @@ func main() {
 		log.Printf("[SYSTEM] Config ichidagi eski link yangilandi: %s -> %s", cfg.WebhookURL, envWebhook)
 		cfg.WebhookURL = envWebhook
 	}
+	cfg.FrontendURL = cfg.WebhookURL
+	botService.SyncAdminMenuButtons(context.Background())
 	// -----------------------------------------------------------------
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", botHandler.WebhookHTTPHandler)

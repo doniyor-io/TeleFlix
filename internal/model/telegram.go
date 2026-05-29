@@ -78,4 +78,10 @@ type InlineButton struct {
 	URL string `json:"url,omitempty"`
 
 	Data string `json:"callback_data,omitempty"`
+
+	WebApp *WebAppInfo `json:"web_app,omitempty"`
+}
+
+type WebAppInfo struct {
+	URL string `json:"url"`
 }
