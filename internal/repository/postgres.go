@@ -3,13 +3,15 @@ package repository
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
-	"fmt"
-	"log"
 	"math/big"
+	"strconv"
+	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5"
+	"tg-movie-bot/internal/model"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,21 +20,24 @@ type PostgresRepository struct {
 }
 
 func NewPostgresRepository(databaseURL string) (*PostgresRepository, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PostgreSQL Pool: %w", err)
+		return nil, err
 	}
 
 	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("error connecting to PostgreSQL (Ping): %w", err)
+		return nil, err
 	}
 
-	repo := &PostgresRepository{Pool: pool}
+	repo := &PostgresRepository{
+		Pool: pool,
+	}
+
 	if err := repo.migrate(ctx); err != nil {
-		return nil, fmt.Errorf("migration error: %w", err)
+		return nil, err
 	}
 
 	return repo, nil
@@ -40,221 +45,796 @@ func NewPostgresRepository(databaseURL string) (*PostgresRepository, error) {
 
 func (r *PostgresRepository) migrate(ctx context.Context) error {
 	queries := []string{
-		`CREATE TABLE IF NOT EXISTS users (
+
+		`
+		CREATE TABLE IF NOT EXISTS users (
 			id BIGINT PRIMARY KEY,
-			username VARCHAR(100),
+			username TEXT,
 			language_code VARCHAR(10) DEFAULT 'uz',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
+			created_at TIMESTAMP DEFAULT NOW()
+		);
+		`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS language_code VARCHAR(10) DEFAULT 'uz';`,
-		`CREATE TABLE IF NOT EXISTS movies (
-			id SERIAL PRIMARY KEY,
-			instagram_url TEXT UNIQUE NOT NULL,
-			tg_file_id TEXT NOT NULL,
-			caption TEXT,
-			code VARCHAR(20) UNIQUE,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);`,
-		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS code VARCHAR(20) UNIQUE;`,
-		`CREATE TABLE IF NOT EXISTS channels (
-			id SERIAL PRIMARY KEY,
-			tg_channel_id BIGINT UNIQUE NOT NULL,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();`,
+
+		`
+		CREATE TABLE IF NOT EXISTS channels (
+			id BIGSERIAL PRIMARY KEY,
+			telegram_channel_id BIGINT UNIQUE NOT NULL,
 			invite_link TEXT NOT NULL,
-			is_active BOOLEAN DEFAULT TRUE
-		);`,
-		`CREATE TABLE IF NOT EXISTS reels (
-			id SERIAL PRIMARY KEY,
-			reel_link TEXT UNIQUE NOT NULL,
-			movie_id INT REFERENCES movies(id) ON DELETE SET NULL,
-			linked_at TIMESTAMP DEFAULT NOW()
-		);`,
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMP DEFAULT NOW()
+		);
+		`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS telegram_channel_id BIGINT;`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS invite_link TEXT;`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`,
+		`ALTER TABLE channels ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();`,
+		`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'channels' AND column_name = 'tg_channel_id'
+			) THEN
+				UPDATE channels SET telegram_channel_id = tg_channel_id
+				WHERE telegram_channel_id IS NULL AND tg_channel_id IS NOT NULL;
+			END IF;
+		END $$;
+		`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS channels_telegram_channel_id_idx ON channels (telegram_channel_id);`,
+
+		`
+		CREATE TABLE IF NOT EXISTS movies (
+			id BIGSERIAL PRIMARY KEY,
+			code VARCHAR(30) UNIQUE NOT NULL,
+			telegram_file_id TEXT NOT NULL,
+			caption TEXT,
+			created_at TIMESTAMP DEFAULT NOW()
+		);
+		`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS code VARCHAR(30);`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS telegram_file_id TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS title TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS rating TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS language TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS caption TEXT;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS request_count BIGINT DEFAULT 0;`,
+		`ALTER TABLE movies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();`,
+		`UPDATE movies SET title = COALESCE(NULLIF(title, ''), NULLIF(caption, ''), code, id::TEXT) WHERE title IS NULL OR title = '';`,
+		`ALTER TABLE movies ALTER COLUMN title SET NOT NULL;`,
+		`ALTER TABLE movies ALTER COLUMN request_count SET DEFAULT 0;`,
+		`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'movies' AND column_name = 'tg_file_id'
+			) THEN
+				UPDATE movies SET telegram_file_id = tg_file_id
+				WHERE telegram_file_id IS NULL AND tg_file_id IS NOT NULL;
+			END IF;
+		END $$;
+		`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS movies_code_idx ON movies (code);`,
+
+		`
+		CREATE TABLE IF NOT EXISTS reels (
+			id BIGSERIAL PRIMARY KEY,
+			shortcode VARCHAR(100) UNIQUE NOT NULL,
+			reel_url TEXT NOT NULL,
+			movie_id BIGINT REFERENCES movies(id) ON DELETE CASCADE,
+			created_at TIMESTAMP DEFAULT NOW()
+		);
+		`,
+		`ALTER TABLE reels ADD COLUMN IF NOT EXISTS shortcode VARCHAR(100);`,
+		`ALTER TABLE reels ADD COLUMN IF NOT EXISTS reel_url TEXT;`,
+		`ALTER TABLE reels ADD COLUMN IF NOT EXISTS movie_id BIGINT;`,
+		`ALTER TABLE reels ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();`,
+		`
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'reels' AND column_name = 'reel_link'
+			) THEN
+				UPDATE reels SET reel_url = reel_link
+				WHERE reel_url IS NULL AND reel_link IS NOT NULL;
+			END IF;
+		END $$;
+		`,
+		`UPDATE reels SET shortcode = regexp_replace(reel_url, '^.*/(reel|reels|p)/([^/?#]+).*$','\2') WHERE shortcode IS NULL AND reel_url IS NOT NULL;`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS reels_shortcode_idx ON reels (shortcode);`,
 	}
 
-	for _, q := range queries {
-		if _, err := r.Pool.Exec(ctx, q); err != nil {
+	for _, query := range queries {
+		if _, err := r.Pool.Exec(ctx, query); err != nil {
 			return err
 		}
 	}
 
-	log.Println("[INFO] Postgres tables are checked and ready")
 	return nil
 }
 
-// GenerateUniqueMovieCode - Kolliya (To'qnashuv) tekshiruvi bilan ishlaydigan unique kod generatori
-func (r *PostgresRepository) GenerateUniqueMovieCode(ctx context.Context) (string, error) {
-	for i := 0; i < 100; i++ { // Maksimal 100 marta urinish
-		num, err := rand.Int(rand.Reader, big.NewInt(9000))
-		if err != nil {
-			return "", err
-		}
-		code := fmt.Sprintf("MOV%d", num.Int64()+1000) // 1000 dan 9999 gacha format
+func (r *PostgresRepository) SaveUserLanguage(
+	ctx context.Context,
+	userID int64,
+	username string,
+	lang string,
+) error {
 
-		var exists bool
-		err = r.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM movies WHERE code=$1)", code).Scan(&exists)
+	query := `
+	INSERT INTO users (
+		id,
+		username,
+		language_code
+	)
+	VALUES ($1, $2, $3)
+	ON CONFLICT(id)
+	DO UPDATE SET
+		username = EXCLUDED.username,
+		language_code = EXCLUDED.language_code
+	`
+
+	_, err := r.Pool.Exec(
+		ctx,
+		query,
+		userID,
+		username,
+		lang,
+	)
+
+	return err
+}
+
+func (r *PostgresRepository) UserExists(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) UserHasContact(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := r.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND phone_number IS NOT NULL AND phone_number <> '')`, userID).Scan(&exists)
+	return exists, err
+}
+
+func (r *PostgresRepository) SaveUserContact(
+	ctx context.Context,
+	userID int64,
+	username string,
+	phoneNumber string,
+	firstName string,
+	lastName string,
+) error {
+
+	query := `
+	INSERT INTO users (
+		id,
+		username,
+		phone_number,
+		first_name,
+		last_name
+	)
+	VALUES ($1, $2, $3, $4, $5)
+	ON CONFLICT(id)
+	DO UPDATE SET
+		username = EXCLUDED.username,
+		phone_number = EXCLUDED.phone_number,
+		first_name = EXCLUDED.first_name,
+		last_name = EXCLUDED.last_name
+	`
+
+	_, err := r.Pool.Exec(ctx, query, userID, username, phoneNumber, firstName, lastName)
+	return err
+}
+
+func (r *PostgresRepository) GetUserLanguage(
+	ctx context.Context,
+	userID int64,
+) (string, error) {
+
+	query := `
+	SELECT language_code
+	FROM users
+	WHERE id = $1
+	`
+
+	var lang string
+
+	err := r.Pool.QueryRow(
+		ctx,
+		query,
+		userID,
+	).Scan(&lang)
+
+	if err != nil {
+		return "uz", nil
+	}
+
+	return lang, nil
+}
+
+func (r *PostgresRepository) GenerateMovieCode() (string, error) {
+	const letters = "0123456789"
+
+	var builder strings.Builder
+
+	for i := 0; i < 6; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
 			return "", err
 		}
-		if !exists {
-			return code, nil
+
+		builder.WriteByte(letters[n.Int64()])
+	}
+
+	return builder.String(), nil
+}
+
+type CreateMovieInput struct {
+	FileID   string `json:"telegram_file_id"`
+	Title    string `json:"title"`
+	Rating   string `json:"rating"`
+	Language string `json:"language"`
+	Caption  string `json:"caption"`
+}
+
+func (r *PostgresRepository) CreateMovie(
+	ctx context.Context,
+	input CreateMovieInput,
+) (*model.Movie, error) {
+	input.Title = strings.TrimSpace(input.Title)
+	input.FileID = strings.TrimSpace(input.FileID)
+	input.Rating = strings.TrimSpace(input.Rating)
+	input.Language = strings.TrimSpace(input.Language)
+	input.Caption = strings.TrimSpace(input.Caption)
+	if input.Title == "" {
+		return nil, errors.New("movie title is required")
+	}
+	if input.FileID == "" {
+		return nil, errors.New("telegram file id is required")
+	}
+
+	query := `
+	INSERT INTO movies (
+		code,
+		telegram_file_id,
+		title,
+		rating,
+		language,
+		caption
+	)
+	VALUES ($1, $2, $3, $4, $5, $6)
+	RETURNING id, created_at
+	`
+
+	var movie model.Movie
+
+	movie.TelegramFileID = input.FileID
+	movie.Title = input.Title
+	movie.Rating = input.Rating
+	movie.Language = input.Language
+	movie.Caption = input.Caption
+
+	for attempt := 0; attempt < 10; attempt++ {
+		code, err := r.GenerateMovieCode()
+		if err != nil {
+			return nil, err
+		}
+
+		movie.MovieCode = code
+		err = r.Pool.QueryRow(
+			ctx,
+			query,
+			code,
+			input.FileID,
+			input.Title,
+			input.Rating,
+			input.Language,
+			input.Caption,
+		).Scan(
+			&movie.ID,
+			&movie.CreatedAt,
+		)
+
+		if err == nil {
+			return &movie, nil
+		}
+
+		if !strings.Contains(err.Error(), "duplicate key") {
+			return nil, err
 		}
 	}
-	return "", errors.New("failed to generate unique code: collision limit reached")
+
+	return nil, errors.New("failed to generate a unique movie code")
 }
 
-func (r *PostgresRepository) SaveMovie(ctx context.Context, instagramURL, tgFileID, caption, code string) error {
-	query := `INSERT INTO movies (instagram_url, tg_file_id, caption, code)
-			  VALUES ($1, $2, $3, $4)
-			  ON CONFLICT (instagram_url)
-			  DO UPDATE SET tg_file_id = $2, caption = $3`
-	_, err := r.Pool.Exec(ctx, query, instagramURL, tgFileID, caption, code)
+func (r *PostgresRepository) DeleteMovie(ctx context.Context, code string) error {
+	result, err := r.Pool.Exec(ctx, `DELETE FROM movies WHERE code = $1`, strings.TrimSpace(code))
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return errors.New("movie not found")
+	}
+	return nil
+}
+
+func (r *PostgresRepository) GetMovieByCode(
+	ctx context.Context,
+	code string,
+) (*model.Movie, error) {
+
+	query := `
+	SELECT
+		id,
+		code,
+		telegram_file_id,
+		title,
+		rating,
+		language,
+		caption,
+		request_count,
+		created_at
+	FROM movies
+	WHERE code = $1
+	`
+
+	var movie model.Movie
+
+	err := r.Pool.QueryRow(
+		ctx,
+		query,
+		code,
+	).Scan(
+		&movie.ID,
+		&movie.MovieCode,
+		&movie.TelegramFileID,
+		&movie.Title,
+		&movie.Rating,
+		&movie.Language,
+		&movie.Caption,
+		&movie.RequestCount,
+		&movie.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &movie, nil
+}
+
+func (r *PostgresRepository) CreateReel(
+	ctx context.Context,
+	shortcode string,
+	reelURL string,
+	movieID int64,
+) error {
+
+	query := `
+	INSERT INTO reels (
+		shortcode,
+		reel_url,
+		movie_id
+	)
+	VALUES ($1, $2, $3)
+	ON CONFLICT(shortcode)
+	DO UPDATE SET
+		reel_url = EXCLUDED.reel_url,
+		movie_id = EXCLUDED.movie_id
+	`
+
+	_, err := r.Pool.Exec(
+		ctx,
+		query,
+		shortcode,
+		reelURL,
+		movieID,
+	)
+
 	return err
 }
 
-func (r *PostgresRepository) GetMovieByCode(ctx context.Context, code string) (int, string, string, error) {
-	query := `SELECT id, tg_file_id, caption FROM movies WHERE code = $1`
-	var id int
-	var fileID, caption string
-	err := r.Pool.QueryRow(ctx, query, code).Scan(&id, &fileID, &caption)
-	return id, fileID, caption, err
+func (r *PostgresRepository) GetMovieByShortcode(
+	ctx context.Context,
+	shortcode string,
+) (*model.Movie, error) {
+
+	query := `
+	SELECT
+		m.id,
+		m.code,
+		m.telegram_file_id,
+		m.title,
+		m.rating,
+		m.language,
+		m.caption,
+		m.request_count,
+		m.created_at
+	FROM reels r
+	INNER JOIN movies m
+	ON r.movie_id = m.id
+	WHERE r.shortcode = $1
+	`
+
+	var movie model.Movie
+
+	err := r.Pool.QueryRow(
+		ctx,
+		query,
+		shortcode,
+	).Scan(
+		&movie.ID,
+		&movie.MovieCode,
+		&movie.TelegramFileID,
+		&movie.Title,
+		&movie.Rating,
+		&movie.Language,
+		&movie.Caption,
+		&movie.RequestCount,
+		&movie.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &movie, nil
 }
 
-func (r *PostgresRepository) SaveReel(ctx context.Context, reelLink string, movieID int) error {
-	query := `INSERT INTO reels (reel_link, movie_id) VALUES ($1, $2)
-			  ON CONFLICT (reel_link) DO UPDATE SET movie_id = $2`
-	_, err := r.Pool.Exec(ctx, query, reelLink, movieID)
+func (r *PostgresRepository) AddChannel(
+	ctx context.Context,
+	channelID int64,
+	inviteLink string,
+) error {
+	channelID = normalizeStoredChannelID(channelID)
+
+	query := `
+	INSERT INTO channels (
+		telegram_channel_id,
+		invite_link
+	)
+	VALUES ($1, $2)
+	ON CONFLICT(telegram_channel_id)
+	DO UPDATE SET
+		invite_link = EXCLUDED.invite_link,
+		is_active = true
+	`
+
+	_, err := r.Pool.Exec(
+		ctx,
+		query,
+		channelID,
+		inviteLink,
+	)
+
 	return err
 }
 
-func (r *PostgresRepository) GetMovieByReelLink(ctx context.Context, reelLink string) (string, string, error) {
-	query := `SELECT m.tg_file_id, m.caption FROM movies m
-			  JOIN reels r ON r.movie_id = m.id
-			  WHERE r.reel_link = $1`
-	var fileID, caption string
-	err := r.Pool.QueryRow(ctx, query, reelLink).Scan(&fileID, &caption)
-	return fileID, caption, err
-}
+func (r *PostgresRepository) GetChannels(
+	ctx context.Context,
+) ([]model.Channel, error) {
 
-func (r *PostgresRepository) GetMovieByInstagramURL(ctx context.Context, instagramURL string) (string, string, error) {
-	query := `SELECT tg_file_id, caption FROM movies WHERE instagram_url = $1`
-	var fileID, caption string
-	err := r.Pool.QueryRow(ctx, query, instagramURL).Scan(&fileID, &caption)
-	return fileID, caption, err
-}
+	query := `
+	SELECT
+		id,
+		telegram_channel_id,
+		invite_link,
+		is_active,
+		created_at
+	FROM channels
+	WHERE is_active = true
+	`
 
-func (r *PostgresRepository) GetActiveChannels(ctx context.Context) ([]map[string]interface{}, error) {
-	query := `SELECT tg_channel_id, invite_link FROM channels WHERE is_active = true`
 	rows, err := r.Pool.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
 
-	var channels []map[string]interface{}
+	var channels []model.Channel
+
 	for rows.Next() {
-		var tgID int64
-		var link string
-		if err := rows.Scan(&tgID, &link); err != nil {
+		var channel model.Channel
+
+		err := rows.Scan(
+			&channel.ID,
+			&channel.TelegramChannelID,
+			&channel.InviteLink,
+			&channel.IsActive,
+			&channel.CreatedAt,
+		)
+
+		if err != nil {
 			return nil, err
 		}
-		channels = append(channels, map[string]interface{}{
-			"id":   tgID,
-			"link": link,
-		})
+
+		channels = append(channels, channel)
 	}
+
 	return channels, nil
 }
 
-func (r *PostgresRepository) SaveUserLang(ctx context.Context, userID int64, username, lang string) error {
-	query := `INSERT INTO users (id, username, language_code)
-			  VALUES ($1, $2, $3)
-              ON CONFLICT (id) DO UPDATE SET username = $2, language_code = $3`
-	_, err := r.Pool.Exec(ctx, query, userID, username, lang)
+func (r *PostgresRepository) DeleteChannel(
+	ctx context.Context,
+	channelID int64,
+) error {
+	channelID = normalizeStoredChannelID(channelID)
+
+	query := `
+	DELETE FROM channels
+	WHERE telegram_channel_id = $1
+	`
+
+	result, err := r.Pool.Exec(
+		ctx,
+		query,
+		channelID,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return errors.New("channel not found")
+	}
+
+	return nil
+}
+
+func (r *PostgresRepository) GetMovies(
+	ctx context.Context,
+) ([]model.Movie, error) {
+
+	query := `
+	SELECT
+		id,
+		code,
+		telegram_file_id,
+		title,
+		rating,
+		language,
+		caption,
+		request_count,
+		created_at,
+		(
+			SELECT reel_url
+			FROM reels
+			WHERE reels.movie_id = movies.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) AS reel_url
+	FROM movies
+	ORDER BY created_at DESC
+	`
+
+	rows, err := r.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var movies []model.Movie
+
+	for rows.Next() {
+		var movie model.Movie
+		var reelURL sql.NullString
+
+		err := rows.Scan(
+			&movie.ID,
+			&movie.MovieCode,
+			&movie.TelegramFileID,
+			&movie.Title,
+			&movie.Rating,
+			&movie.Language,
+			&movie.Caption,
+			&movie.RequestCount,
+			&movie.CreatedAt,
+			&reelURL,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if reelURL.Valid {
+			movie.ReelURL = reelURL.String
+		}
+
+		movies = append(movies, movie)
+	}
+
+	return movies, nil
+}
+
+func (r *PostgresRepository) IncrementMovieRequest(ctx context.Context, movieID int64) error {
+	_, err := r.Pool.Exec(ctx, `UPDATE movies SET request_count = COALESCE(request_count, 0) + 1 WHERE id = $1`, movieID)
 	return err
 }
 
-func (r *PostgresRepository) GetUserLang(ctx context.Context, userID int64) (string, error) {
-	query := `SELECT language_code FROM users WHERE id = $1`
-	var lang string
-	err := r.Pool.QueryRow(ctx, query, userID).Scan(&lang)
-	if err != nil {
-		return "uz", nil
+func (r *PostgresRepository) GetTopMovies(ctx context.Context, limit int) ([]model.Movie, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
 	}
-	return lang, nil
-}
 
-func (r *PostgresRepository) GetTotalUsersCount(ctx context.Context) (int, error) {
-	query := `SELECT COUNT(*) FROM users`
-	var count int
-	err := r.Pool.QueryRow(ctx, query).Scan(&count)
-	return count, err
-}
+	query := `
+	SELECT
+		id,
+		code,
+		telegram_file_id,
+		title,
+		rating,
+		language,
+		caption,
+		request_count,
+		created_at,
+		(
+			SELECT reel_url
+			FROM reels
+			WHERE reels.movie_id = movies.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) AS reel_url
+	FROM movies
+	WHERE COALESCE(request_count, 0) > 0
+	ORDER BY request_count DESC, created_at DESC
+	LIMIT $1
+	`
 
-func (r *PostgresRepository) GetTotalMoviesCount(ctx context.Context) (int, error) {
-	query := `SELECT COUNT(*) FROM movies`
-	var count int
-	err := r.Pool.QueryRow(ctx, query).Scan(&count)
-	return count, err
-}
-
-func (r *PostgresRepository) GetLatestMoviesList(ctx context.Context, limit int) ([]string, error) {
-	query := `SELECT code, caption FROM movies ORDER BY created_at DESC LIMIT $1`
 	rows, err := r.Pool.Query(ctx, query, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var list []string
-	idx := 1
+	var movies []model.Movie
 	for rows.Next() {
-		var code, caption string
-		if err := rows.Scan(&code, &caption); err != nil {
+		var movie model.Movie
+		var reelURL sql.NullString
+		if err := rows.Scan(
+			&movie.ID,
+			&movie.MovieCode,
+			&movie.TelegramFileID,
+			&movie.Title,
+			&movie.Rating,
+			&movie.Language,
+			&movie.Caption,
+			&movie.RequestCount,
+			&movie.CreatedAt,
+			&reelURL,
+		); err != nil {
 			return nil, err
 		}
-		if len(caption) > 30 {
-			caption = caption[:27] + "..."
+		if reelURL.Valid {
+			movie.ReelURL = reelURL.String
 		}
-		list = append(list, fmt.Sprintf("%d. %s — %s", idx, code, caption))
-		idx++
+		movies = append(movies, movie)
 	}
-	return list, nil
+
+	return movies, nil
 }
 
-func (r *PostgresRepository) AddChannel(ctx context.Context, tgChannelID int64, inviteLink string) error {
-	query := `INSERT INTO channels (tg_channel_id, invite_link, is_active)
-			  VALUES ($1, $2, true)
-			  ON CONFLICT (tg_channel_id) DO UPDATE SET invite_link = $2, is_active = true`
-	_, err := r.Pool.Exec(ctx, query, tgChannelID, inviteLink)
-	return err
-}
+func (r *PostgresRepository) SearchUsers(ctx context.Context, queryText string, limit int) ([]model.DBUser, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
 
-func (r *PostgresRepository) DeleteChannel(ctx context.Context, tgChannelID int64) error {
-	query := `DELETE FROM channels WHERE tg_channel_id = $1`
-	_, err := r.Pool.Exec(ctx, query, tgChannelID)
-	return err
-}
+	q := "%" + strings.ToLower(strings.TrimSpace(queryText)) + "%"
+	query := `
+	SELECT id, username, COALESCE(phone_number, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), language_code, created_at
+	FROM users
+	WHERE $1 = '%%'
+		OR LOWER(COALESCE(username, '')) LIKE $1
+		OR LOWER(COALESCE(first_name, '')) LIKE $1
+		OR LOWER(COALESCE(last_name, '')) LIKE $1
+		OR COALESCE(phone_number, '') LIKE $1
+		OR id::TEXT LIKE $1
+	ORDER BY created_at DESC
+	LIMIT $2
+	`
 
-func (r *PostgresRepository) GetAllMovies(ctx context.Context) ([]map[string]interface{}, error) {
-	query := `SELECT id, instagram_url, tg_file_id, caption FROM movies ORDER BY created_at DESC`
-	rows, err := r.Pool.Query(ctx, query)
+	rows, err := r.Pool.Query(ctx, query, q, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var movies []map[string]interface{}
+	var users []model.DBUser
 	for rows.Next() {
-		var id int
-		var instaURL, fileID, caption string
-		if err := rows.Scan(&id, &instaURL, &fileID, &caption); err != nil {
+		var user model.DBUser
+		if err := rows.Scan(
+			&user.ID,
+			&user.Username,
+			&user.PhoneNumber,
+			&user.FirstName,
+			&user.LastName,
+			&user.LanguageCode,
+			&user.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
-		movies = append(movies, map[string]interface{}{
-			"id":               id,
-			"instagram_url":    instaURL,
-			"telegram_file_id": fileID,
-			"caption":          caption,
-		})
+		users = append(users, user)
 	}
-	return movies, nil
+
+	return users, nil
+}
+
+func (r *PostgresRepository) GetStatistics(
+	ctx context.Context,
+) (map[string]int64, error) {
+
+	stats := make(map[string]int64)
+
+	var users int64
+	var movies int64
+	var reels int64
+
+	err := r.Pool.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM users`,
+	).Scan(&users)
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = r.Pool.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM movies`,
+	).Scan(&movies)
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = r.Pool.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM reels`,
+	).Scan(&reels)
+
+	if err != nil {
+		return nil, err
+	}
+
+	stats["users"] = users
+	stats["movies"] = movies
+	stats["reels"] = reels
+
+	return stats, nil
+}
+
+func ExtractShortcode(instagramURL string) string {
+	instagramURL = strings.TrimSpace(instagramURL)
+	instagramURL = strings.TrimSuffix(instagramURL, "/")
+
+	parts := strings.Split(instagramURL, "/")
+
+	for i, part := range parts {
+		if (part == "reel" || part == "reels" || part == "p") && i+1 < len(parts) {
+			return strings.Split(parts[i+1], "?")[0]
+		}
+	}
+
+	return ""
+}
+
+func normalizeStoredChannelID(channelID int64) int64 {
+	if channelID <= 0 {
+		return channelID
+	}
+
+	normalized, err := strconv.ParseInt("-100"+strconv.FormatInt(channelID, 10), 10, 64)
+	if err != nil {
+		return channelID
+	}
+
+	return normalized
 }

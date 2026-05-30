@@ -6,7 +6,8 @@ RED='\033[0m\033[31m'
 NC='\033[0m' # No Color
 
 ENV_FILE=".env"
-PORT=""
+BACKEND_PORT=""
+FRONTEND_PORT=""
 BOT_TOKEN=""
 
 echo -e "${BLUE}[INFO] Automation script has started...${NC}"
@@ -16,12 +17,16 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-PORT=$(grep -E "^PORT=" $ENV_FILE | cut -d '=' -f2 | tr -d '\r' | tr -d ' ')
-if [ -z "$PORT" ]; then
-    echo -e "${RED}[WARN] PORT not found in .env, defaulting to 9090${NC}"
+BACKEND_PORT=$(grep -E "^PORT=" $ENV_FILE | cut -d '=' -f2 | tr -d '\r' | tr -d ' ')
+if [ -z "$BACKEND_PORT" ]; then
+    BACKEND_PORT=9090
+    echo -e "${RED}[WARN] PORT not found in .env, defaulting to ${BACKEND_PORT}${NC}"
 fi
 
-PORT=3000
+FRONTEND_PORT=$(grep -E "^FRONTEND_PORT=" $ENV_FILE | cut -d '=' -f2 | tr -d '\r' | tr -d ' ')
+if [ -z "$FRONTEND_PORT" ]; then
+    FRONTEND_PORT=3000
+fi
 
 BOT_TOKEN=$(grep -E "^TELEGRAM_BOT_TOKEN=" $ENV_FILE | cut -d '=' -f2 | tr -d '\r' | tr -d ' ')
 if [ -z "$BOT_TOKEN" ]; then
@@ -45,22 +50,45 @@ else
     echo -e "${GREEN}[INFO] Ngrok is already installed on your machine!${NC}"
 fi
 
+# Fondagi eski jarayonlarni tozalash
 pkill ngrok 2>/dev/null
+sleep 1
 
-echo -e "${GREEN}[INFO] Opening an Ngrok tunnel on port $PORT...${NC}"
-
-ngrok http $PORT --request-header-add "ngrok-skip-browser-warning: true" > /dev/null 2>&1 &
+echo -e "${GREEN}[INFO] Opening an Ngrok tunnel on backend port $BACKEND_PORT...${NC}"
+ngrok http $BACKEND_PORT --request-header-add "ngrok-skip-browser-warning: true" > /dev/null 2>&1 &
 
 echo -e "${BLUE}[INFO] Waiting for Ngrok to generate the tunnel URL...${NC}"
 
 MAX_ATTEMPTS=10
 ATTEMPT=1
-NGROK_URL=""
+BACKEND_NGROK_URL=""
+
+get_ngrok_url_for_port() {
+    local port="$1"
+    python3 - "$port" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = sys.argv[1]
+try:
+    with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2) as resp:
+        payload = json.load(resp)
+except Exception:
+    sys.exit(0)
+
+target = f"http://localhost:{port}"
+for tunnel in payload.get("tunnels", []):
+    if tunnel.get("proto") == "https" and tunnel.get("config", {}).get("addr") == target:
+        print(tunnel.get("public_url", ""))
+        break
+PY
+}
 
 while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok-free.app' | head -n 1)
+    BACKEND_NGROK_URL=$(get_ngrok_url_for_port "$BACKEND_PORT")
 
-    if [ ! -z "$NGROK_URL" ]; then
+    if [ ! -z "$BACKEND_NGROK_URL" ]; then
         break
     fi
 
@@ -69,40 +97,64 @@ while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
     ATTEMPT=$((ATTEMPT+1))
 done
 
-if [ -z "$NGROK_URL" ]; then
-    echo -e "${RED}[ERROR] Failed to obtain Ngrok link after $MAX_ATTEMPTS attempts.${NC}"
-    echo -e "${RED}[HINT] Make sure you have set auth token via command: 'ngrok config add-authtoken <token>'${NC}"
+if [ -z "$BACKEND_NGROK_URL" ]; then
+    echo -e "${RED}[ERROR] Failed to obtain backend Ngrok link after $MAX_ATTEMPTS attempts.${NC}"
+    echo -e "${RED}[HINT] Terminalda 'pkill ngrok' qilib qayta urining. Token ulanganini tekshiring!${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}[SUCCESS] New Ngrok link: $NGROK_URL${NC}"
+echo -e "${GREEN}[SUCCESS] Backend Ngrok link: $BACKEND_NGROK_URL${NC}"
 
-if grep -q "^WEBHOOK_URL=" "$ENV_FILE"; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|^\(WEBHOOK_URL=\).*|\1$NGROK_URL|" "$ENV_FILE"
-        sed -i '' "s|^\(NGROK_URL=\).*|\1$NGROK_URL|" "$ENV_FILE" 2>/dev/null || echo "NGROK_URL=$NGROK_URL" >> "$ENV_FILE"
+# Xavfsiz atrof-muhit yozish funksiyasi
+update_env_var() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "$ENV_FILE"; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^\(${key}=\).*|\1${value}|" "$ENV_FILE"
+        else
+            sed -i "s|^\(${key}=\).*|\1${value}|" "$ENV_FILE"
+        fi
     else
-        sed -i "s|^\(WEBHOOK_URL=\).*|\1$NGROK_URL|" "$ENV_FILE"
-        sed -i "s|^\(NGROK_URL=\).*|\1$NGROK_URL|" "$ENV_FILE" 2>/dev/null || echo "NGROK_URL=$NGROK_URL" >> "$ENV_FILE"
+        echo "${key}=${value}" >> "$ENV_FILE"
     fi
-else
-    echo "WEBHOOK_URL=$NGROK_URL" >> "$ENV_FILE"
-    echo "NGROK_URL=$NGROK_URL" >> "$ENV_FILE"
-fi
-echo -e "${GREEN}[SUCCESS] New Ngrok URL has successfully been injected in .env!${NC}"
+}
 
-echo -e "${BLUE}[INFO] Telegram Webhook updating...${NC}"
-WEBHOOK_RES=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${NGROK_URL}/webhook")
+update_env_var "WEBHOOK_URL" "$BACKEND_NGROK_URL"
+update_env_var "NGROK_URL" "$BACKEND_NGROK_URL"
+update_env_var "FRONTEND_URL" "$BACKEND_NGROK_URL"
+update_env_var "FRONTEND_PORT" "$FRONTEND_PORT"
 
-if [[ "$WEBHOOK_RES" == *"\"ok\":true"* ]]; then
-    echo -e "${GREEN}[SUCCESS] Telegram Webhook has been successfully connected! Description: $WEBHOOK_RES${NC}"
-else
-    echo -e "${RED}[ERROR] Telegram Webhook failed to connect. Possible cause: $WEBHOOK_RES${NC}"
-    exit 1
-fi
+echo -e "${GREEN}[SUCCESS] New Ngrok URLs have successfully been injected in .env!${NC}"
 
 echo -e "${BLUE}[INFO] Rebuilding and restarting Docker Containers with the new URL...${NC}"
 sudo docker compose down
 sudo docker compose up --build -d
 
-echo -e "${GREEN}[FINISH] All is ready now! Your infrastructure is fully live on port $PORT${NC}"
+echo -e "${BLUE}[INFO] Waiting for backend health check through Ngrok...${NC}"
+HEALTH_OK=0
+for attempt in {1..15}; do
+    if curl -fsS "${BACKEND_NGROK_URL}/health" > /dev/null 2>&1; then
+        HEALTH_OK=1
+        break
+    fi
+    echo -e "${BLUE}[INFO] Health attempt ${attempt}/15: backend not ready yet...${NC}"
+    sleep 2
+done
+
+if [ "$HEALTH_OK" -ne 1 ]; then
+    echo -e "${RED}[ERROR] Backend did not become reachable through Ngrok: ${BACKEND_NGROK_URL}/health${NC}"
+    exit 1
+fi
+
+echo -e "${BLUE}[INFO] Telegram Webhook updating...${NC}"
+WEBHOOK_RES=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${BACKEND_NGROK_URL}/webhook")
+
+if [[ "$WEBHOOK_RES" == *"\"ok\":true"* ]]; then
+    echo -e "${GREEN}[SUCCESS] Telegram Webhook has been successfully connected!${NC}"
+else
+    echo -e "${RED}[ERROR] Telegram Webhook failed to connect. Cause: $WEBHOOK_RES${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}[FINISH] All is ready now! Backend: ${BACKEND_NGROK_URL} | Mini App: ${BACKEND_NGROK_URL}${NC}"
