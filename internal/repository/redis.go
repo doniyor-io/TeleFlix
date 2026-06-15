@@ -117,3 +117,27 @@ func (r *RedisRepository) DeletePendingMovieFileID(ctx context.Context, userID i
 	key := fmt.Sprintf("pending_movie_file:%d", userID)
 	return r.Client.Del(ctx, key).Err()
 }
+
+func (r *RedisRepository) SetPendingSubscriptionRequest(ctx context.Context, userID int64, request string) error {
+	key := fmt.Sprintf("pending_subscription_request:%d", userID)
+	return r.Client.Set(ctx, key, request, 30*time.Minute).Err()
+}
+
+func (r *RedisRepository) GetPendingSubscriptionRequest(ctx context.Context, userID int64) (string, error) {
+	key := fmt.Sprintf("pending_subscription_request:%d", userID)
+
+	request, err := r.Client.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return request, nil
+}
+
+func (r *RedisRepository) DeletePendingSubscriptionRequest(ctx context.Context, userID int64) error {
+	key := fmt.Sprintf("pending_subscription_request:%d", userID)
+	return r.Client.Del(ctx, key).Err()
+}
