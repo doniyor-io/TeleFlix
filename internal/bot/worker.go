@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -13,6 +14,16 @@ import (
 	"tg-movie-bot/internal/repository"
 	"tg-movie-bot/pkg/telegram"
 )
+
+const (
+	pendingRequestKindCode      = "code"
+	pendingRequestKindInstagram = "instagram"
+)
+
+type pendingSubscriptionRequest struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
 
 type BotService struct {
 	cfg         *config.Config
@@ -325,13 +336,16 @@ func (s *BotService) handleCallbackQuery(ctx context.Context, callback *model.Ca
 			if err != nil {
 				return
 			}
+			if s.processPendingSubscriptionRequest(ctx, userID, chatID, userLang) {
+				return
+			}
 			err = s.tgClient.SendMessage(ctx, chatID, T(userLang, "sub_success"))
 			if err != nil {
 				log.Printf("[TG SEND ERROR] sub success message failed for chat %d: %v", chatID, err)
 				return
 			}
 		} else {
-			_ = s.sendSubscriptionPrompt(ctx, chatID, userLang, T(userLang, "not_subbed_yet"))
+			_ = s.sendSubscriptionPromptButtons(ctx, chatID, userLang, T(userLang, "not_subbed_yet"))
 		}
 		return
 	}
@@ -545,20 +559,19 @@ func (s *BotService) linkReelToMovie(ctx context.Context, code string, reelURL s
 func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Message, lang string) {
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
-	instaURL := normalizeInstagramURL(msg.Text)
 
-	isSubbed := s.checkChannelsMembership(ctx, userID)
-	if isSubbed {
-		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, true)
-	} else {
-		_ = s.redisRepo.DeleteSubscriptionCache(ctx, userID)
-	}
-
-	if !isSubbed {
-		_ = s.sendSubscriptionPrompt(ctx, chatID, lang, T(lang, "force_sub"))
+	if !s.ensureSubscribedOrPrompt(ctx, userID, chatID, lang, T(lang, "force_sub"), &pendingSubscriptionRequest{
+		Kind:  pendingRequestKindInstagram,
+		Value: msg.Text,
+	}) {
 		return
 	}
 
+	s.sendMovieByInstagramLink(ctx, userID, chatID, msg.Text, lang)
+}
+
+func (s *BotService) sendMovieByInstagramLink(ctx context.Context, userID int64, chatID int64, link string, lang string) {
+	instaURL := normalizeInstagramURL(link)
 	shortcode := repository.ExtractShortcode("https://" + instaURL)
 	movie, err := s.pgRepo.GetMovieByShortcode(ctx, shortcode)
 
@@ -587,14 +600,11 @@ func (s *BotService) handleUserMovieRequest(ctx context.Context, msg *model.Mess
 }
 
 func (s *BotService) sendMovieByCode(ctx context.Context, userID int64, chatID int64, code string, lang string) {
-	isSubbed := s.checkChannelsMembership(ctx, userID)
-	if isSubbed {
-		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, true)
-	} else {
-		_ = s.redisRepo.DeleteSubscriptionCache(ctx, userID)
-	}
-	if !isSubbed {
-		_ = s.sendSubscriptionPrompt(ctx, chatID, lang, T(lang, "force_sub"))
+	code = strings.TrimSpace(code)
+	if !s.ensureSubscribedOrPrompt(ctx, userID, chatID, lang, T(lang, "force_sub"), &pendingSubscriptionRequest{
+		Kind:  pendingRequestKindCode,
+		Value: code,
+	}) {
 		return
 	}
 
@@ -701,7 +711,74 @@ func (s *BotService) checkChannelsMembership(ctx context.Context, userID int64) 
 	return true
 }
 
-func (s *BotService) sendSubscriptionPrompt(ctx context.Context, chatID int64, lang string, text string) error {
+func (s *BotService) ensureSubscribedOrPrompt(ctx context.Context, userID int64, chatID int64, lang string, promptText string, pendingRequest *pendingSubscriptionRequest) bool {
+	if isSubbed, found, err := s.redisRepo.GetSubscriptionCache(ctx, userID); err != nil {
+		log.Printf("[CHECK-SUB ERROR] failed to read subscription cache for user %d: %v", userID, err)
+	} else if found && isSubbed {
+		_ = s.redisRepo.DeletePendingSubscriptionRequest(ctx, userID)
+		return true
+	}
+
+	isSubbed := s.checkChannelsMembership(ctx, userID)
+	if isSubbed {
+		_ = s.redisRepo.SetSubscriptionCache(ctx, userID, true)
+		_ = s.redisRepo.DeletePendingSubscriptionRequest(ctx, userID)
+		return true
+	}
+
+	_ = s.redisRepo.DeleteSubscriptionCache(ctx, userID)
+	if pendingRequest != nil {
+		s.savePendingSubscriptionRequest(ctx, userID, *pendingRequest)
+	}
+	_ = s.sendSubscriptionPromptButtons(ctx, chatID, lang, promptText)
+	return false
+}
+
+func (s *BotService) savePendingSubscriptionRequest(ctx context.Context, userID int64, request pendingSubscriptionRequest) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		log.Printf("[PENDING REQUEST ERROR] failed to encode pending request for user %d: %v", userID, err)
+		return
+	}
+	if err := s.redisRepo.SetPendingSubscriptionRequest(ctx, userID, string(body)); err != nil {
+		log.Printf("[PENDING REQUEST ERROR] failed to save pending request for user %d: %v", userID, err)
+	}
+}
+
+func (s *BotService) processPendingSubscriptionRequest(ctx context.Context, userID int64, chatID int64, lang string) bool {
+	rawRequest, err := s.redisRepo.GetPendingSubscriptionRequest(ctx, userID)
+	if err != nil {
+		log.Printf("[PENDING REQUEST ERROR] failed to load pending request for user %d: %v", userID, err)
+		return false
+	}
+	if strings.TrimSpace(rawRequest) == "" {
+		return false
+	}
+
+	if err := s.redisRepo.DeletePendingSubscriptionRequest(ctx, userID); err != nil {
+		log.Printf("[PENDING REQUEST ERROR] failed to delete pending request for user %d: %v", userID, err)
+	}
+
+	var request pendingSubscriptionRequest
+	if err := json.Unmarshal([]byte(rawRequest), &request); err != nil {
+		log.Printf("[PENDING REQUEST ERROR] failed to decode pending request for user %d: %v", userID, err)
+		return false
+	}
+
+	switch request.Kind {
+	case pendingRequestKindInstagram:
+		s.sendMovieByInstagramLink(ctx, userID, chatID, request.Value, lang)
+	case pendingRequestKindCode:
+		s.sendMovieByCode(ctx, userID, chatID, request.Value, lang)
+	default:
+		log.Printf("[PENDING REQUEST ERROR] unsupported pending request kind for user %d: %s", userID, request.Kind)
+		return false
+	}
+
+	return true
+}
+
+func (s *BotService) sendSubscriptionPromptButtons(ctx context.Context, chatID int64, lang string, text string) error {
 	channels, err := s.pgRepo.GetChannels(ctx)
 	if err != nil {
 		log.Printf("[CHECK-SUB ERROR] failed to load channels for prompt: %v", err)
