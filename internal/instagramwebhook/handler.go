@@ -2,10 +2,12 @@ package instagramwebhook
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,13 +15,15 @@ import (
 
 type Handler struct {
 	verifyToken string
+	secret      string
 	store       *Store
 	logger      *log.Logger
 }
 
-func NewHandler(verifyToken string, store *Store, logger *log.Logger) *Handler {
+func NewHandler(verifyToken string, secret string, store *Store, logger *log.Logger) *Handler {
 	return &Handler{
 		verifyToken: verifyToken,
+		secret:      secret,
 		store:       store,
 		logger:      logger,
 	}
@@ -60,6 +64,11 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
+	if !authorizedBearer(r, h.secret) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var payload MetaWebhookPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -111,4 +120,23 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		Processed: processed,
 		Skipped:   skipped,
 	})
+}
+
+func authorizedBearer(r *http.Request, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return false
+	}
+
+	token := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(token, "Bearer ") {
+		return false
+	}
+
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+	if token == "" {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }

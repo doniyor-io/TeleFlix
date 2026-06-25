@@ -56,10 +56,12 @@ Required for the Telegram bot:
 ```env
 PORT=9090
 ENV=development
+PUBLIC_URL=https://your-public-url.example
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 ADMIN_IDS=123456789,987654321
 DATABASE_URL=postgres://postgres:linux@postgres:5432/moviedb?sslmode=disable
 REDIS_URL=redis:6379
+# Optional: set these only if webhook and frontend URLs differ from PUBLIC_URL.
 WEBHOOK_URL=https://your-public-url.example
 FRONTEND_URL=https://your-public-url.example
 BOT_NAME=Movie Finder Bot

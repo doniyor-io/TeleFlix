@@ -50,12 +50,6 @@ func main() {
 		log.Fatalf("[CRITICAL] Failed to load locales: %v", err)
 	}
 
-	envWebhook := os.Getenv("WEBHOOK_URL")
-	if envWebhook != "" && envWebhook != cfg.WebhookURL {
-		log.Printf("[SYSTEM] Config ichidagi eski link yangilandi: %s -> %s", cfg.WebhookURL, envWebhook)
-		cfg.WebhookURL = envWebhook
-	}
-	cfg.FrontendURL = cfg.WebhookURL
 	botService.SyncAdminMenuButtons(context.Background())
 	// -----------------------------------------------------------------
 	mux := http.NewServeMux()
@@ -68,14 +62,18 @@ func main() {
 		fmt.Fprintf(w, "Bot Engine is working fine!")
 	})
 
-	mux.HandleFunc("/api/admin/stats", botHandler.GetStatsHandler)
-	mux.HandleFunc("/api/admin/channels", botHandler.ChannelsHandler)
-	mux.HandleFunc("/api/admin/channels/delete", botHandler.DeleteChannelHandler)
-	mux.HandleFunc("/api/admin/movies", botHandler.GetMoviesHandler)
-	mux.HandleFunc("/api/admin/movies/delete", botHandler.DeleteMovieHandler)
-	mux.HandleFunc("/api/admin/movies/link-reel", botHandler.LinkReelHandler)
-	mux.HandleFunc("/api/admin/movies/top", botHandler.TopMoviesHandler)
-	mux.HandleFunc("/api/admin/users", botHandler.UsersHandler)
+	handleAdmin := func(pattern string, handler http.HandlerFunc) {
+		mux.Handle(pattern, botHandler.AdminAuthMiddleware(handler))
+	}
+
+	handleAdmin("/api/admin/stats", botHandler.GetStatsHandler)
+	handleAdmin("/api/admin/channels", botHandler.ChannelsHandler)
+	handleAdmin("/api/admin/channels/delete", botHandler.DeleteChannelHandler)
+	handleAdmin("/api/admin/movies", botHandler.GetMoviesHandler)
+	handleAdmin("/api/admin/movies/delete", botHandler.DeleteMovieHandler)
+	handleAdmin("/api/admin/movies/link-reel", botHandler.LinkReelHandler)
+	handleAdmin("/api/admin/movies/top", botHandler.TopMoviesHandler)
+	handleAdmin("/api/admin/users", botHandler.UsersHandler)
 
 	frontendURLStr := os.Getenv("FRONTEND_INTERNAL_URL")
 	if frontendURLStr == "" {

@@ -11,6 +11,7 @@ type Config struct {
 	Port                   string
 	DatabaseURL            string
 	MetaWebhookVerifyToken string
+	MetaWebhookSecret      string
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -23,6 +24,7 @@ func LoadConfig(path string) (Config, error) {
 		Port:                   firstNonEmpty(os.Getenv("PORT"), values["PORT"]),
 		DatabaseURL:            firstNonEmpty(os.Getenv("DATABASE_URL"), values["DATABASE_URL"]),
 		MetaWebhookVerifyToken: firstNonEmpty(os.Getenv("META_WEBHOOK_VERIFY_TOKEN"), values["META_WEBHOOK_VERIFY_TOKEN"]),
+		MetaWebhookSecret:      firstNonEmpty(os.Getenv("META_WEBHOOK_SECRET"), values["META_WEBHOOK_SECRET"]),
 	}
 
 	if cfg.Port == "" {
@@ -35,6 +37,10 @@ func LoadConfig(path string) (Config, error) {
 
 	if cfg.MetaWebhookVerifyToken == "" {
 		return Config{}, errors.New("META_WEBHOOK_VERIFY_TOKEN is required")
+	}
+
+	if cfg.MetaWebhookSecret == "" {
+		return Config{}, errors.New("META_WEBHOOK_SECRET is required")
 	}
 
 	return cfg, nil

@@ -3,6 +3,7 @@ package bot
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -89,6 +90,11 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !authorizedBearer(r, h.botService.cfg.MetaWebhookSecret) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
@@ -113,17 +119,6 @@ func (h *BotHandler) MetaReelHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		log.Printf("[META REEL ERROR] failed to decode request: %v", err)
 		http.Error(w, "Bad request body", http.StatusBadRequest)
-		return
-	}
-
-	authHeader := r.Header.Get("Authorization")
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == "" {
-		token = req.AuthToken
-	}
-
-	if token != h.botService.cfg.MetaWebhookSecret {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -226,9 +221,45 @@ func (h *BotHandler) fetchMediaPermalink(mediaID string) string {
 	return ""
 }
 
+func (h *BotHandler) AdminAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authorizedBearer(r, h.botService.cfg.BridgeSecret) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func authorizedBearer(r *http.Request, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return false
+	}
+
+	token := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(token, "Bearer ") {
+		return false
+	}
+
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+	if token == "" {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
+}
+
 func (h *BotHandler) CorsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		allowedOrigin := strings.TrimSpace(h.botService.cfg.FrontendURL)
+		if allowedOrigin == "" {
+			allowedOrigin = strings.TrimSpace(h.botService.cfg.WebhookURL)
+		}
+		if allowedOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning")
 
