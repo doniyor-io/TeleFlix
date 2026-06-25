@@ -3,3 +3,8 @@
 *.iml
 *.ipr
 .env
+.env.example
+**.md
+
+# no ignore guide markdown
+!/README.md
