@@ -11,6 +11,8 @@ type Config struct {
 	Port string
 	Env  string
 
+	PublicURL string
+
 	TelegramBotToken string
 
 	AdminIDs []int64
@@ -41,6 +43,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Port:                   viper.GetString("PORT"),
 		Env:                    viper.GetString("ENV"),
+		PublicURL:              viper.GetString("PUBLIC_URL"),
 		TelegramBotToken:       viper.GetString("TELEGRAM_BOT_TOKEN"),
 		DatabaseURL:            viper.GetString("DATABASE_URL"),
 		RedisURL:               viper.GetString("REDIS_URL"),
@@ -73,7 +76,31 @@ func Load() (*Config, error) {
 		cfg.Port = "9090"
 	}
 
+	cfg.PublicURL = cleanURL(cfg.PublicURL)
+	cfg.WebhookURL = cleanURL(cfg.WebhookURL)
+	cfg.FrontendURL = cleanURL(cfg.FrontendURL)
+
+	if cfg.WebhookURL == "" {
+		cfg.WebhookURL = cfg.PublicURL
+	}
+
+	if cfg.FrontendURL == "" {
+		cfg.FrontendURL = cfg.PublicURL
+	}
+
+	if strings.TrimSpace(cfg.BridgeSecret) == "" {
+		return nil, fmt.Errorf("BRIDGE_SECRET is required")
+	}
+
+	if strings.TrimSpace(cfg.MetaWebhookSecret) == "" {
+		return nil, fmt.Errorf("META_WEBHOOK_SECRET is required")
+	}
+
 	return cfg, nil
+}
+
+func cleanURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
 func (c *Config) IsAdmin(userID int64) bool {

@@ -38,7 +38,7 @@ func main() {
 		logger.Fatalf("[CRITICAL] schema setup error: %v", err)
 	}
 
-	handler := instagramwebhook.NewHandler(cfg.MetaWebhookVerifyToken, store, logger)
+	handler := instagramwebhook.NewHandler(cfg.MetaWebhookVerifyToken, cfg.MetaWebhookSecret, store, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/instagram", handler.InstagramWebhook)
