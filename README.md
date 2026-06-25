@@ -1,6 +1,6 @@
-# cinemagobot
+# TeleFlix
 
-cinemagobot is a Go backend for a Telegram movie discovery bot. The idea is simple from the user's point of view: they paste an Instagram Reel link into Telegram, and the bot sends back the right movie.
+TeleFlix is a Go backend for a Telegram movie discovery bot. The idea is simple from the user's point of view: they paste an Instagram Reel link into Telegram, and the bot sends back the right movie.
 
 Behind that small interaction there is a production flow for channel owners, movie admins, Telegram users, and Instagram Reels. This repository contains the backend that ties those pieces together.
 
